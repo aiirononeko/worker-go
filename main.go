@@ -7,9 +7,11 @@ import (
 )
 
 func main() {
-	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		msg := "Hello, Go!"
-		w.Write([]byte(msg))
-	})
+	http.HandleFunc("/hello", hello)
 	workers.Serve(nil) // use http.DefaultServeMux
+}
+
+func hello(w http.ResponseWriter, req *http.Request) {
+	msg := "Hello, BulkTrack!"
+	w.Write([]byte(msg))
 }
