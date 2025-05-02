@@ -1,3 +1,5 @@
 build
 node_modules
 .wrangler
+.envrc
+data/db_data/volume

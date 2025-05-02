@@ -1,0 +1,105 @@
+openapi: 3.0.0
+info:
+  title: BulkTrack API
+  version: 1.0.0
+  description: API definition for the BulkTrack application.
+servers:
+  - url: https://api.bulktrack.app/v1
+    description: Production server
+  - url: http://localhost:8787/v1
+    description: Local development server
+paths:
+  /workouts/{id}:
+    get:
+      summary: Get workout details by ID
+      operationId: getWorkoutById
+      tags:
+        - Workouts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID of the workout to retrieve
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Successful retrieval of workout details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutDetail'
+        '404':
+          description: Workout not found
+        '401':
+          description: Unauthorized
+components:
+  schemas:
+    WorkoutDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Workout ID
+        name:
+          type: string
+          description: Workout name
+        description:
+          type: string
+          nullable: true
+          description: Optional workout description
+        exercises:
+          type: array
+          description: List of exercises in the workout
+          items:
+            $ref: '#/components/schemas/Exercise'
+      required:
+        - id
+        - name
+        - exercises
+    Exercise:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Exercise ID
+        name:
+          type: string
+          description: Exercise name
+        sets:
+          type: integer
+          description: Number of sets performed
+        reps:
+          type: integer
+          description: Number of repetitions per set
+        rpe:
+          type: number
+          format: float
+          nullable: true
+          description: Rate of Perceived Exertion (e.g., 1-10)
+        rir:
+          type: integer
+          nullable: true
+          description: Reps In Reserve (e.g., 0-5)
+        interval:
+          type: integer
+          nullable: true
+          description: Rest interval in seconds between sets
+      required:
+        - id
+        - name
+        - sets
+        - reps
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []
+tags:
+  - name: Workouts
+    description: Operations related to workouts
