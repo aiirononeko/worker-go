@@ -33,7 +33,7 @@ Client (iOS / Web)
 * **Auth** Clerk (＋Apple Sign-In統合) — Edge Workerで JWT 検証のみ  
 * **Cache** `Cache-Control: private` ＋ Cloudflare Cache API (短期: 10–30 s)  
 * **API** 純粋 REST／OpenAPI 定義 `api/openapi.yaml`
-* **Schema Definition** Atlas HCL (`schema.hcl`) — DBスキーマの唯一の信頼できる情報源
+* **Schema Definition** SQL (`schema.sql`) — DBスキーマの唯一の信頼できる情報源 (Atlas & sqlc 兼用)
 
 ---
 
@@ -117,7 +117,7 @@ bulktrack-api/
 
 ## 📦 Data Modeling
 
-**注意:** スキーマの唯一の信頼できる情報源 (Single Source of Truth) は `schema.hcl` ファイルです。以下の Mermaid 図は視覚的な理解を助けるための参考情報であり、常に最新の状態を反映しているとは限りません。
+**注意:** スキーマの唯一の信頼できる情報源 (Single Source of Truth) は `schema.sql` ファイルです。以下の Mermaid 図は視覚的な理解を助けるための参考情報であり、常に最新の状態を反映しているとは限りません。
 
 ```mermaid
 erDiagram
@@ -211,25 +211,30 @@ wrangler dev --hyperdrive=stub --env=local
 
 > `GOOS=wasip1 GOARCH=wasm go build -o dist/worker.wasm -trimpath -ldflags="-s -w" ./cmd/worker`
 
-### 4. Apply DB migrations (Declarative)
+### 4. Apply DB migrations (Declarative with sqlc)
 
-ローカルDBにスキーマを適用します。
+ローカルDBに `schema.sql` の内容を適用します。
 
 ```bash
-# schema.hcl の内容をローカルDBに適用
+# schema.sql の内容をローカルDBに適用
 atlas schema apply \
   -u "postgres://postgres:password@localhost:5432/bulktrack?sslmode=disable" \
-  --to file://schema.hcl
+  --to file://schema.sql \
+  --dev-url "docker://postgres/16/dev" # Atlas が検証用に一時DBコンテナを使用
 
 # 適用前に差分を確認し、問題なければ承認します。
 # 自動で承認する場合は --auto-approve フラグを追加します。
 ```
 
+`--dev-url` を指定することで、Atlas は一時的な Docker コンテナ (`postgres:16` イメージの `dev` という名前のコンテナ) を起動し、適用計画の検証を行います。初回実行時は Docker イメージのプルに時間がかかることがあります。
+
 ---
 
-## 🗂️ Schema & Migration Playbook (Declarative with Atlas HCL)
+## 🗂️ Schema & Migration Playbook (Declarative with Atlas & sqlc)
 
-この章では **Atlas HCL (`schema.hcl`)** を用いた宣言的なデータベーススキーマ管理と、**sqlc** による型安全なコード生成の運用手順をまとめます。
+この章では **Atlas** と **sqlc** を組み合わせ、`schema.sql` を唯一の信頼できる情報源 (Source of Truth) とする宣言的なデータベーススキーマ管理と、型安全なコード生成の運用手順をまとめます。
+
+参考: [Declarative migrations for sqlc | Atlas](https://atlasgo.io/guides/frameworks/sqlc-declarative)
 
 ---
 
@@ -261,112 +266,68 @@ export PRODUCTION_DATABASE_URL="postgres://user:pass@neon.tech/neondb?sslmode=re
 
 ```
 bulktrack-api/
-├── schema.hcl           # ← Atlas HCL スキーマ定義
+├── schema.sql           # ← SQL スキーマ定義 (Atlas & sqlc 兼用)
 ├── internal/infrastructure/persistence/postgres/
 │   ├── sqlc.yaml
 │   ├── query/           # 手書き SQL (SELECT, INSERT, etc.)
 │   └── sql/             # sqlc-generate 産物 (git add 可)
-├── atlas.hcl            # 環境設定 (任意)
 └── ... (その他)
 ```
 
-`migrations/` ディレクトリは宣言的マイグレーションでは通常使用しません。
+`schema.hcl` や `migrations/` ディレクトリはこのワークフローでは使用しません。
 
 ---
 
 ### 3 . **スキーマを変更する手順**
 
-1.  **`schema.hcl` を編集**
-    *   テーブル、カラム、インデックスなどの定義を直接編集します。
-    *   Atlas HCL のシンタックスに従ってください。
-    *   参考: [Atlas HCL Documentation](https://atlasgo.io/atlas-schema/hcl)
-2.  **スキーマ定義の検証 (Lint)**
+1.  **`schema.sql` を編集**
+    *   `CREATE TABLE`, `ALTER TABLE` (※注意: Atlas は差分から判断するため、通常 `CREATE` のみでOK) などの標準 SQL を使ってスキーマ定義を直接編集します。
+2.  **`query.sql` を編集 (任意)**
+    *   スキーマ変更に伴い、`internal/infrastructure/persistence/postgres/query/` 以下のクエリファイル (`.sql`) を必要に応じて修正します。
+3.  **`sqlc generate` を実行**
+    *   `schema.sql` または `query.sql` を変更したら、必ず `sqlc generate` を実行して Go の型定義やデータベースアクセスのコードを更新します。
     ```bash
-    # ローカルDBと比較して潜在的な問題を検出
-    atlas schema lint --env local --dev-url file://schema.hcl
-    ```
-3.  **差分確認 (任意だが推奨)**
-    ```bash
-    # ローカルDBとの差分を表示
-    atlas schema diff --env local --dev-url file://schema.hcl
-    ```
-4.  **ローカル DB へ適用 & 動作確認**
-    ```bash
-    # schema.hcl の内容をローカルDBに適用 (差分確認後に承認)
-    atlas schema apply \
-      -u $LOCAL_DATABASE_URL \
-      --to file://schema.hcl
-
-    # または、atlas.hcl で env "local" が設定されていれば:
-    # atlas schema apply --env local
-
-    # アプリケーションを起動し、変更が意図通りか確認
-    ```
-5.  **sqlc で型安全コードを更新**
-    *   **重要:** sqlc は現時点 (2024年5月) で HCL を直接スキーマソースとして読み込めません。
-    *   そのため、現在のスキーマを SQL 形式で `inspect` し、それを `sqlc.yaml` で参照する必要があります。
-    ```bash
-    # 現在のローカルDBスキーマをSQLファイルに出力 (sqlc用)
-    atlas schema inspect -u $LOCAL_DATABASE_URL --format '{{ sql . }}' > internal/infrastructure/persistence/postgres/schema_for_sqlc.sql
-
-    # sqlc.yaml で schema_for_sqlc.sql を参照するように設定
-    # (例: schema: "./schema_for_sqlc.sql")
-
-    # sqlc を実行
     sqlc generate
     ```
-    *   `internal/infrastructure/persistence/postgres/query/*.sql` に必要なクエリを追記・修正してから `sqlc generate` を実行します。
+4.  **差分確認 (任意だが推奨)**
+    *   Atlas を使って、現在のローカル DB と `schema.sql` の差分を確認します。
+    ```bash
+    atlas schema diff \
+      -u $LOCAL_DATABASE_URL \
+      --dev-url file://schema.sql # 比較対象として schema.sql を指定
+    ```
+5.  **ローカル DB へ適用 & 動作確認**
+    *   Atlas を使って `schema.sql` の内容をローカル DB に適用します。
+    ```bash
+    # schema.sql の内容をローカルDBに適用 (差分確認後に承認)
+    atlas schema apply \
+      -u $LOCAL_DATABASE_URL \
+      --to file://schema.sql \
+      --dev-url "docker://postgres/16/dev"
+
+    # 自動承認する場合:
+    # atlas schema apply -u $LOCAL_DATABASE_URL --to file://schema.sql --dev-url "docker://postgres/16/dev" --auto-approve
+    ```
+    *   アプリケーションを起動し、変更が意図通りか確認します。
 6.  **ユニットテスト / 結合テスト** を通す
 7.  **PR を作成**
-    *   GitHub Actions: `schema.hcl` の変更と生成された Go コードを含む。
-    *   CI では `atlas schema lint`, `atlas schema diff --env production --dev-url file://schema.hcl` (dry-run 的な確認), `sqlc generate`, `go test ./...` を実行。
+    *   `schema.sql`, `query/*.sql` の変更と、`sqlc generate` で生成された Go コードを含む。
+    *   CI でのチェック項目例:
+        *   `sqlc generate` (差分がないこと)
+        *   `atlas schema diff --url $PRODUCTION_DATABASE_URL --dev-url file://schema.sql` (本番との差分確認、Dry Run)
+        *   `go test ./...`
 8.  **マージ後、自動デプロイ**
-    *   GitHub Actions が `atlas schema apply --env production --dev-url file://schema.hcl --auto-approve` を実行し、本番 DB へスキーマを適用。
+    *   CI/CD パイプラインが `atlas schema apply --url $PRODUCTION_DATABASE_URL --to file://schema.sql --auto-approve` を実行し、本番 DB へスキーマを適用。
 
 ---
 
-### 4 . `atlas.hcl` サンプル (宣言的マイグレーション用)
-
-```hcl
-# schema.hcl をスキーマソースとして定義
-schema {
-  src = "file://schema.hcl"
-}
-
-# ローカル開発環境
-env "local" {
-  url = env("LOCAL_DATABASE_URL")
-  # dev_url は schema {} ブロックで定義されたものが使われる
-}
-
-# 本番環境 (例: Neon)
-env "production" {
-  url = env("PRODUCTION_DATABASE_URL")
-}
-
-# lint や diff の設定 (任意)
-lint {
-  destructive {
-    error = true # カラム削除などをエラーとするか
-  }
-}
-diff {
-  skip {
-    # 差分検出時に無視する変更 (例: コメント変更)
-    # change_comment = true
-  }
-}
-```
-
----
-
-### 5 . `sqlc.yaml` サンプル (宣言的マイグレーション用)
+### 4 . `sqlc.yaml` サンプル
 
 ```yaml
 version: "2"
 sql:
-  - # schema は atlas schema inspect で生成したSQLファイルを指定
-    schema: "./internal/infrastructure/persistence/postgres/schema_for_sqlc.sql"
+  - # schema はプロジェクトルートの schema.sql を直接指定
+    schema: "./schema.sql"
     queries: "./internal/infrastructure/persistence/postgres/query"
     engine: "postgresql"
     gen:
@@ -379,55 +340,56 @@ sql:
 
 ---
 
-### 6 . Makefile Shortcut サンプル
+### 5 . Makefile Shortcut サンプル
 
 ```makefile
 DB_URL ?= $(LOCAL_DATABASE_URL)
-SCHEMA_HCL = schema.hcl
-SQLC_SCHEMA_OUT = internal/infrastructure/persistence/postgres/schema_for_sqlc.sql
+SCHEMA_SQL = schema.sql
+ATLAS_DEV_DB = "docker://postgres/16/dev"
 
-# スキーマ関連
-db/lint:
-	# HCLファイルの静的解析 (DB接続不要)
-	atlas schema lint --dev-url file://$(SCHEMA_HCL)
-
-db/diff:
-	# ローカルDBとの差分を表示
-	atlas schema diff \
-	  -u $(DB_URL) \
-	  --dev-url file://$(SCHEMA_HCL)
-
-db/apply:
-	# ローカルDBにスキーマを適用 (自動承認)
-	atlas schema apply \
-	  -u $(DB_URL) \
-	  --to file://$(SCHEMA_HCL) \
-	  --auto-approve
-
-db/inspect-for-sqlc:
-	@echo "Inspecting local DB schema to $(SQLC_SCHEMA_OUT) for sqlc..."
-	atlas schema inspect -u $(DB_URL) --format '{{ sql . }}' > $(SQLC_SCHEMA_OUT)
-
-# sqlc 関連
-sqlc: db/inspect-for-sqlc
+# sqlc
+sqlc:
 	@echo "Generating Go code with sqlc..."
 	sqlc generate
 
-.PHONY: db/lint db/diff db/apply db/inspect-for-sqlc sqlc
+# Atlas スキーマ関連
+db/diff:
+	@echo "Checking differences between DB and $(SCHEMA_SQL)..."
+	atlas schema diff \
+	  -u $(DB_URL) \
+	  --dev-url file://$(SCHEMA_SQL)
+
+db/apply:
+	@echo "Applying $(SCHEMA_SQL) to the database (auto-approve)..."
+	atlas schema apply \
+	  -u $(DB_URL) \
+	  --to file://$(SCHEMA_SQL) \
+	  --dev-url $(ATLAS_DEV_DB) \
+	  --auto-approve
+
+db/apply-confirm:
+	@echo "Applying $(SCHEMA_SQL) to the database (confirm required)..."
+	atlas schema apply \
+	  -u $(DB_URL) \
+	  --to file://$(SCHEMA_SQL) \
+	  --dev-url $(ATLAS_DEV_DB)
+
+.PHONY: sqlc db/diff db/apply db/apply-confirm
 ```
 
 ---
 
-#### 🌟 開発フロー早見表 (宣言的)
+#### 🌟 開発フロー早見表 (Atlas Declarative + sqlc)
 
-| フェーズ         | コマンド                     | 目的                                         |
-|------------------|------------------------------|----------------------------------------------|
-| **スキーマ編集** | (手動で `schema.hcl` 編集) | スキーマ定義を変更                             |
-| **検証**         | `make db/lint`               | スキーマ定義の問題点をチェック (HCL構文)       |
-| **差分確認**     | `make db/diff`               | ローカル DB との差分を確認                   |
-| **ローカル適用** | `make db/apply`              | ローカル DB にスキーマ変更を反映 (自動承認) |
-| **コード生成**   | `make sqlc`                  | DB スキーマから Go コード (DAO) を生成/更新 |
-| **本番適用**     | GitHub Actions / 手動 apply | 本番 DB にスキーマ変更を反映                 |
+| フェーズ         | コマンド                     | 目的                                            |
+|------------------|------------------------------|-------------------------------------------------|
+| **スキーマ編集** | (手動で `schema.sql` 編集) | スキーマ定義 (DDL) を変更                         |
+| **クエリ編集**   | (手動で `query/*.sql` 編集) | スキーマ変更に合わせてクエリを修正 (任意)         |
+| **コード生成**   | `make sqlc`                  | `schema.sql`/`query/*.sql` から Go コードを生成/更新 |
+| **差分確認**     | `make db/diff`               | ローカル DB と `schema.sql` の差分を確認        |
+| **ローカル適用** | `make db/apply-confirm`      | ローカル DB にスキーマ変更を反映 (確認あり)      |
+| **テスト**       | `go test ./...`              | 変更後のコードとスキーマでテストを実行            |
+| **本番適用**     | GitHub Actions / 手動 apply | 本番 DB に `schema.sql` の状態を反映            |
 
 ---
 
