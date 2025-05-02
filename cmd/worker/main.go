@@ -3,15 +3,17 @@ package main
 import (
 	"net/http"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/query"
+	"github.com/aiirononeko/bulktrack-api/internal/interface/http/handler"
 	"github.com/syumai/workers"
 )
 
 func main() {
-	http.HandleFunc("/hello", hello)
-	workers.Serve(nil) // use http.DefaultServeMux
-}
+	// 依存性の注入 (Dependency Injection)
+	pingQueryService := query.NewPingQueryService()
+	pingHandler := handler.NewPingHandler(pingQueryService)
 
-func hello(w http.ResponseWriter, req *http.Request) {
-	msg := "Hello, BulkTrack!"
-	w.Write([]byte(msg))
+	http.Handle("/ping", pingHandler)
+
+	workers.Serve(nil) // use http.DefaultServeMux
 }
