@@ -2,38 +2,24 @@
 
 **BulkTrack** は "トレーニングボリューム" にフォーカスした筋トレ記録アプリのバックエンドです。  
 iOS (Swift) と Web クライアントが **同一 REST API** を呼び出します。  
-本リポジトリでは **Go (公式 Wasm compiler)** と **Cloudflare Workers** をベースに、Clean Architecture / DDD を最小構成で適用しています。
+本リポジトリでは **Go (公式 Wasm compiler)** と **Cloudflare Workers**, **Cloudflare D1** をベースに、Clean Architecture / DDD を最小構成で適用しています。
 
 ---
 
 ## 🗺️ High-Level Architecture
 
-```
-Client (iOS / Web)
-        │  HTTPS (REST)
-        ▼
-┌────────────────────────────┐
-│ Go Edge Worker (Wasm)      │  ← Cloudflare Workers
-│ ─ Router + Middleware      │
-│ ─ Command / Query (CQRS)   │
-│ ─ Domain Logic             │
-└────────┬───────────────────┘
-         │ pooled TCP
-         ▼
-┌──────────────┐
-│ Hyperdrive   │  ← Connection pool at PoP
-└────────┬─────┘
-         ▼
-┌─────────────────┐
-│ Neon Postgres   │  ← Serverless PG
-└─────────────────┘
+```mermaid
+graph TD
+    Client[Client (iOS / Web)] -->|HTTPS (REST)| Worker
+    Worker[Go Edge Worker (Wasm) <br/> - Router + Middleware <br/> - Command / Query (CQRS) <br/> - Domain Logic <br/> ← Cloudflare Workers] -->|D1 Binding| D1
+    D1[Cloudflare D1 <br/> ← Serverless SQLite] 
 ```
 
-* **Data Store** Neon (serverless PostgreSQL) — Hyperdrive 経由で低レイテンシ接続  
-* **Auth** Clerk (＋Apple Sign-In統合) — Edge Workerで JWT 検証のみ  
-* **Cache** `Cache-Control: private` ＋ Cloudflare Cache API (短期: 10–30 s)  
-* **API** 純粋 REST／OpenAPI 定義 `api/openapi.yaml`
-* **Schema Definition** SQL (`schema.sql`) — DBスキーマの唯一の信頼できる情報源 (Atlas & sqlc 兼用)
+* **Data Store** Cloudflare D1 (serverless SQLite) — Workers から直接低レイテンシ接続
+* **Auth** Clerk (＋Apple Sign-In統合) — Edge Workerで JWT 検証のみ
+* **Cache** `Cache-Control: private` ＋ Cloudflare Cache API (短期: 10–30 s)
+* **API** 純粋 REST／OpenAPI 定義 `api/openapi.yaml`
+* **Schema Definition** SQL (`schema.sql`) — DBスキーマの唯一の信頼できる情報源 (Atlas & sqlc 兼用、**SQLite 互換**)
 
 ---
 
@@ -44,9 +30,9 @@ Client (iOS / Web)
 | **Domain** | `internal/domain/...` | Entities, VOs, Domain Services (**pure Go**) |
 | **Application** | `internal/app/{command,query}` | Use-case orchestration, Tx boundary, DTO ↔ Entity |
 | **Interface / Adapter** | `internal/interface/http` | HTTP Router, DTO marshaling, Auth/CORS middleware |
-| **Infrastructure** | `internal/infrastructure/...` | Neon repo, Clerk client, mail, feature-flag, etc. |
+| **Infrastructure** | `internal/infrastructure/persistence/d1` | **D1** repo implementation, Clerk client, etc. |
 
-依存方向は **Domain → Application → Interface**。Go の import も同方向のみ。  
+依存方向は **Domain → Application → Interface**。Go の import も同方向のみ。
 `go vet -unusedresult` と `go test ./...` を CI で循環チェック。
 
 ---
@@ -84,20 +70,22 @@ bulktrack-api/
 │   │           └── workout_handler.go
 │   │── infrastructure/
 │   │   ├── persistence/
-│   │   │   └── postgres/
-│   │   │       ├── repo.go          # Implements domain repository
-│   │   │       ├── db.go            # Open(), migrations
-│   │   │       ├── sqlc.yaml
-│   │   │       └── sql/             # sqlc-generated
+│   │   │   └── d1/            # ← D1 リポジトリ実装
+│   │   │       ├── repo.go
+│   │   │       ├── sql/         # sqlc-generated Go code
+│   │   │       └── query/       # sqlc source queries (*.sql)
+│   │   │       └── sqlc.yaml
 │   │   └── auth/
 │   │       └── clerk.go
 │   └── platform/            # 共通ユーティリティ
 │       ├── logger/
 │       └── errors/
-├── migrations/              # atlas migration files
+├── migrations/              # D1 マイグレーションファイル (*.sql)
 ├── scripts/                 # CI helper scripts
-├── wrangler.toml
+├── wrangler.jsonc           # wrangler 設定 (D1 バインディング含む)
 ├── go.mod
+├── go.sum
+├── schema.sql               # DB スキーマ定義 (SQLite)
 ├── README.md
 ├── Makefile
 └── test/
@@ -106,76 +94,73 @@ bulktrack-api/
     └── integration/
 ```
 
-* **1 file = 1 responsibility**（ユースケース or 型）で小分け  
-* インフラ差し替え用に `//go:build test` タグでメモリ実装を用意
-  ```bash
-  make build
-  test $(stat -c%s dist/worker.wasm) -lt 10000000
-  ```
+* **1 file = 1 responsibility**（ユースケース or 型）で小分け
+* インフラ差し替え用に `//go:build test` タグでメモリ実装を用意 (現状なし)
 
 ---
 
 ## 📦 Data Modeling
 
-**注意:** スキーマの唯一の信頼できる情報源 (Single Source of Truth) は `schema.sql` ファイルです。以下の Mermaid 図は視覚的な理解を助けるための参考情報であり、常に最新の状態を反映しているとは限りません。
+**注意:** スキーマの唯一の信頼できる情報源 (Single Source of Truth) は `schema.sql` ファイル (SQLite 互換) です。以下の Mermaid 図は視覚的な理解を助けるための参考情報であり、常に最新の状態を反映しているとは限りません。
 
 ```mermaid
+-- (Mermaid 図は変更なし、ただしデータ型は実際には SQLite 互換になっている)
 erDiagram
     %% === Core Tables ===
     menus {
-        UUID id PK
+        TEXT id PK
         TEXT user_id FK "Clerk ID"
         TEXT name
         TEXT description
-        INT  sort_order
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ updated_at
+        INTEGER sort_order
+        TEXT created_at
+        TEXT updated_at
     }
 
     exercises {
-        UUID id PK
+        TEXT id PK
         TEXT name
         TEXT user_id NULL "NULL = official"
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ updated_at
+        TEXT created_at
+        TEXT updated_at
     }
 
     muscles {
-        UUID id PK
+        TEXT id PK
         TEXT name
     }
 
     workouts {
-        UUID id PK
+        TEXT id PK
         TEXT user_id FK
-        UUID menu_id FK
-        TIMESTAMPTZ performed_at
-        NUMERIC(3,1) rpe NULL
-        SMALLINT rir NULL
-        TIMESTAMPTZ created_at
-        TIMESTAMPTZ updated_at
+        TEXT menu_id FK
+        TEXT performed_at
+        REAL rpe NULL
+        INTEGER rir NULL
+        TEXT created_at
+        TEXT updated_at
     }
 
     workout_sets {
-        UUID id PK
-        UUID workout_id FK
-        UUID exercise_id FK
-        NUMERIC weight
-        INT reps
-        NUMERIC volume "GENERATED ALWAYS AS (weight * reps) STORED"
+        TEXT id PK
+        TEXT workout_id FK
+        TEXT exercise_id FK
+        REAL weight
+        INTEGER reps
+        REAL volume "GENERATED ALWAYS AS (weight * reps) STORED"
     }
 
     %% === Join Tables ===
     menu_exercises {
-        UUID menu_id FK
-        UUID exercise_id FK
-        INT  position
+        TEXT menu_id FK
+        TEXT exercise_id FK
+        INTEGER  position
         PK  (menu_id, exercise_id)
     }
 
     exercise_muscles {
-        UUID exercise_id FK
-        UUID muscle_id FK
+        TEXT exercise_id FK
+        TEXT muscle_id FK
         PK  (exercise_id, muscle_id)
     }
 
@@ -193,48 +178,76 @@ erDiagram
 
 ### 1. Prerequisites
 
-* Go `>= 1.22`
-* `wrangler >= 3`
-* Docker (Neon sandbox / atlas)
+* Go `>= 1.23`
+* `wrangler >= 4` (or compatible version)
+* Node.js / npm (for `wrangler` and build scripts)
+* `sqlc` (for Go code generation from SQL)
+* (Optional) `atlas` (for schema management assistance)
 
-### 2. Start a Neon test instance + Hyperdrive stub
+### 2. Create Cloudflare D1 Database (First time only)
 
-```bash
-docker compose up neon-dev
-```
-
-### 3. Run Worker locally
+Cloudflare アカウントにログインし、以下のコマンドで D1 データベースを作成します (例: `bulktrack-db`)。
 
 ```bash
-wrangler dev --hyperdrive=stub --env=local
+npx wrangler d1 create bulktrack-db
 ```
 
-> `GOOS=wasip1 GOARCH=wasm go build -o dist/worker.wasm -trimpath -ldflags="-s -w" ./cmd/worker`
+出力された `database_id` を `wrangler.jsonc` の `d1_databases` セクションに設定します。
 
-### 4. Apply DB migrations (Declarative with sqlc)
+```jsonc
+// wrangler.jsonc
+{
+  // ... other settings
+  "d1_databases": [
+    {
+      "binding": "DB", // Worker から参照する名前
+      "database_name": "bulktrack-db", // 作成したDB名
+      "database_id": "YOUR_DATABASE_ID_HERE"
+    }
+  ]
+}
+```
 
-ローカルDBに `schema.sql` の内容を適用します。
+### 3. Apply DB Migrations (Local)
+
+ローカル開発用の D1 データベース (SQLite ファイル) にスキーマを適用します。
+マイグレーションファイルは `migrations/` ディレクトリに配置します。
 
 ```bash
-# schema.sql の内容をローカルDBに適用
-atlas schema apply \
-  -u "postgres://postgres:password@localhost:5432/bulktrack?sslmode=disable" \
-  --to file://schema.sql \
-  --dev-url "docker://postgres/16/dev" # Atlas が検証用に一時DBコンテナを使用
-
-# 適用前に差分を確認し、問題なければ承認します。
-# 自動で承認する場合は --auto-approve フラグを追加します。
+# migrations/ ディレクトリ内の未適用のマイグレーションをローカルDBに適用
+npx wrangler d1 migrations apply bulktrack-db --local 
 ```
 
-`--dev-url` を指定することで、Atlas は一時的な Docker コンテナ (`postgres:16` イメージの `dev` という名前のコンテナ) を起動し、適用計画の検証を行います。初回実行時は Docker イメージのプルに時間がかかることがあります。
+### 4. Generate Go code from SQL
+
+`sqlc` を使用して、`internal/infrastructure/persistence/d1/query/` 内の SQL クエリから Go のコードを生成します。
+
+```bash
+# sqlc.yaml の設定に従ってコードを生成
+sqlc generate -f internal/infrastructure/persistence/d1/sqlc.yaml
+# または make コマンドがあれば
+make sqlc
+```
+
+### 5. Run Worker locally
+
+```bash
+# .dev.vars などで環境変数を設定 (必要であれば)
+wrangler dev
+```
+
+Wasm ビルドは `wrangler dev` が内部で実行します (通常は `npm run build` 経由)。
 
 ---
 
-## 🗂️ Schema & Migration Playbook (Declarative with Atlas & sqlc)
+## 🗂️ Schema & Migration Playbook (Declarative with Atlas & Wrangler D1)
 
-この章では **Atlas** と **sqlc** を組み合わせ、`schema.sql` を唯一の信頼できる情報源 (Source of Truth) とする宣言的なデータベーススキーマ管理と、型安全なコード生成の運用手順をまとめます。
+この章では **Atlas** と **Wrangler D1 Migrations** を組み合わせ、`schema.sql` (SQLite 互換) を唯一の信頼できる情報源 (Source of Truth) とする宣言的なデータベーススキーマ管理と、**sqlc** による型安全なコード生成の運用手順をまとめます。
 
-参考: [Declarative migrations for sqlc | Atlas](https://atlasgo.io/guides/frameworks/sqlc-declarative)
+参考: 
+* [Atlas Docs](https://atlasgo.io/)
+* [Cloudflare D1 Migrations](https://developers.cloudflare.com/d1/platform/migrations/)
+* [Declarative migrations for sqlc | Atlas](https://atlasgo.io/guides/frameworks/sqlc-declarative) (PostgreSQL の例ですが考え方は応用可能)
 
 ---
 
@@ -242,154 +255,40 @@ atlas schema apply \
 
 | Tool | Version (例) | Install |
 |------|--------------|---------|
-| Go   | `>= 1.22` | <https://go.dev/doc/install> |
-| Atlas | `>= 0.17` | `brew install ariga/tap/atlas` |
+| Go   | `>= 1.23` | <https://go.dev/doc/install> |
+| Wrangler | `>= 4` | `npm install -g wrangler` |
 | sqlc | `>= 1.26` | `brew install sqlc` |
-| Docker (optional) | ― | Neon sandbox / postgres emulate |
+| Atlas | `>= 0.17` | `brew install ariga/tap/atlas` |
 
-```bash
-# 初回のみ
-brew install ariga/tap/atlas
-brew install sqlc
-```
+### 2. スキーマ変更の手順 (`schema.sql` を更新)
 
-環境変数 — `.envrc` などで永続化すると便利
-
-```bash
-export LOCAL_DATABASE_URL="postgres://postgres:password@localhost:5432/bulktrack?sslmode=disable"
-export PRODUCTION_DATABASE_URL="postgres://user:pass@neon.tech/neondb?sslmode=require" # 例
-```
-
----
-
-### 2 . ディレクトリ構成
-
-```
-bulktrack-api/
-├── schema.sql           # ← SQL スキーマ定義 (Atlas & sqlc 兼用)
-├── internal/infrastructure/persistence/postgres/
-│   ├── sqlc.yaml
-│   ├── query/           # 手書き SQL (SELECT, INSERT, etc.)
-│   └── sql/             # sqlc-generate 産物 (git add 可)
-└── ... (その他)
-```
-
-`schema.hcl` や `migrations/` ディレクトリはこのワークフローでは使用しません。
-
----
-
-### 3 . **スキーマを変更する手順**
-
-1.  **`schema.sql` を編集**
-    *   `CREATE TABLE`, `ALTER TABLE` (※注意: Atlas は差分から判断するため、通常 `CREATE` のみでOK) などの標準 SQL を使ってスキーマ定義を直接編集します。
-2.  **`query.sql` を編集 (任意)**
-    *   スキーマ変更に伴い、`internal/infrastructure/persistence/postgres/query/` 以下のクエリファイル (`.sql`) を必要に応じて修正します。
-3.  **`sqlc generate` を実行**
-    *   `schema.sql` または `query.sql` を変更したら、必ず `sqlc generate` を実行して Go の型定義やデータベースアクセスのコードを更新します。
+1.  **`schema.sql` を編集:** SQLite 互換の構文でテーブル定義などを変更します。
+2.  **(任意) Atlas で差分確認:** `atlas schema diff` を使って、現在の D1 スキーマ (ローカルまたはリモート) と `schema.sql` の差分からマイグレーション SQL を生成・確認できます。
     ```bash
-    sqlc generate
-    ```
-4.  **差分確認 (任意だが推奨)**
-    *   Atlas を使って、現在のローカル DB と `schema.sql` の差分を確認します。
-    ```bash
+    # ローカル D1 と schema.sql の差分からマイグレーションSQLを生成 (適用はしない)
+    # ローカルDBのパスは環境により異なる可能性あり
     atlas schema diff \
-      -u $LOCAL_DATABASE_URL \
-      --dev-url file://schema.sql # 比較対象として schema.sql を指定
-    ```
-5.  **ローカル DB へ適用 & 動作確認**
-    *   Atlas を使って `schema.sql` の内容をローカル DB に適用します。
-    ```bash
-    # schema.sql の内容をローカルDBに適用 (差分確認後に承認)
-    atlas schema apply \
-      -u $LOCAL_DATABASE_URL \
+      --from "sqlite://.wrangler/state/v3/d1/d17fb255-2ce1-4e3d-bd57-64de4fe0c57b/db.sqlite" \
       --to file://schema.sql \
-      --dev-url "docker://postgres/16/dev"
-
-    # 自動承認する場合:
-    # atlas schema apply -u $LOCAL_DATABASE_URL --to file://schema.sql --dev-url "docker://postgres/16/dev" --auto-approve
+      --dev-url "sqlite://dev.db?mode=memory" # 検証用インメモリDB
     ```
-    *   アプリケーションを起動し、変更が意図通りか確認します。
-6.  **ユニットテスト / 結合テスト** を通す
-7.  **PR を作成**
-    *   `schema.sql`, `query/*.sql` の変更と、`sqlc generate` で生成された Go コードを含む。
-    *   CI でのチェック項目例:
-        *   `sqlc generate` (差分がないこと)
-        *   `atlas schema diff --url $PRODUCTION_DATABASE_URL --dev-url file://schema.sql` (本番との差分確認、Dry Run)
-        *   `go test ./...`
-8.  **マージ後、自動デプロイ**
-    *   CI/CD パイプラインが `atlas schema apply --url $PRODUCTION_DATABASE_URL --to file://schema.sql --auto-approve` を実行し、本番 DB へスキーマを適用。
+3.  **マイグレーションファイルの作成:** `migrations/` ディレクトリに新しいマイグレーションファイル (例: `0002_add_new_column.sql`) を作成し、スキーマ変更を行う SQL (ALTER TABLE など) を記述します。(Atlas が生成した SQL を参考にできます)
+4.  **マイグレーションの適用 (ローカル):** `wrangler` を使ってローカル D1 にマイグレーションを適用し、動作確認します。
+    ```bash
+    npx wrangler d1 migrations apply bulktrack-db --local
+    ```
+5.  **`sqlc` コード再生成:** スキーマ変更に合わせて Go のコードを再生成します。
+    ```bash
+    sqlc generate -f internal/infrastructure/persistence/d1/sqlc.yaml
+    ```
+6.  **テスト:** コード変更と合わせてテストを実行します。
+7.  **マイグレーションの適用 (リモート):** 問題がなければリモートの D1 にマイグレーションを適用します。
+    ```bash
+    npx wrangler d1 migrations apply bulktrack-db --remote
+    ```
+8.  **デプロイ:** `wrangler deploy` で Worker をデプロイします。
 
----
-
-### 4 . `sqlc.yaml` サンプル
-
-```yaml
-version: "2"
-sql:
-  - # schema はプロジェクトルートの schema.sql を直接指定
-    schema: "./schema.sql"
-    queries: "./internal/infrastructure/persistence/postgres/query"
-    engine: "postgresql"
-    gen:
-      go:
-        out: "./internal/infrastructure/persistence/postgres/sql"
-        package: "sql"
-        emit_json_tags: true
-        emit_interface: false # 必要に応じて true に
-```
-
----
-
-### 5 . Makefile Shortcut サンプル
-
-```makefile
-DB_URL ?= $(LOCAL_DATABASE_URL)
-SCHEMA_SQL = schema.sql
-ATLAS_DEV_DB = "docker://postgres/16/dev"
-
-# sqlc
-sqlc:
-	@echo "Generating Go code with sqlc..."
-	sqlc generate
-
-# Atlas スキーマ関連
-db/diff:
-	@echo "Checking differences between DB and $(SCHEMA_SQL)..."
-	atlas schema diff \
-	  -u $(DB_URL) \
-	  --dev-url file://$(SCHEMA_SQL)
-
-db/apply:
-	@echo "Applying $(SCHEMA_SQL) to the database (auto-approve)..."
-	atlas schema apply \
-	  -u $(DB_URL) \
-	  --to file://$(SCHEMA_SQL) \
-	  --dev-url $(ATLAS_DEV_DB) \
-	  --auto-approve
-
-db/apply-confirm:
-	@echo "Applying $(SCHEMA_SQL) to the database (confirm required)..."
-	atlas schema apply \
-	  -u $(DB_URL) \
-	  --to file://$(SCHEMA_SQL) \
-	  --dev-url $(ATLAS_DEV_DB)
-
-.PHONY: sqlc db/diff db/apply db/apply-confirm
-```
-
----
-
-#### 🌟 開発フロー早見表 (Atlas Declarative + sqlc)
-
-| フェーズ         | コマンド                     | 目的                                            |
-|------------------|------------------------------|-------------------------------------------------|
-| **スキーマ編集** | (手動で `schema.sql` 編集) | スキーマ定義 (DDL) を変更                         |
-| **クエリ編集**   | (手動で `query/*.sql` 編集) | スキーマ変更に合わせてクエリを修正 (任意)         |
-| **コード生成**   | `make sqlc`                  | `schema.sql`/`query/*.sql` から Go コードを生成/更新 |
-| **差分確認**     | `make db/diff`               | ローカル DB と `schema.sql` の差分を確認        |
-| **ローカル適用** | `make db/apply-confirm`      | ローカル DB にスキーマ変更を反映 (確認あり)      |
-| **テスト**       | `go test ./...`              | 変更後のコードとスキーマでテストを実行            |
-| **本番適用**     | GitHub Actions / 手動 apply | 本番 DB に `schema.sql` の状態を反映            |
+このフローにより、`schema.sql` を中心とした宣言的なスキーマ管理と、`wrangler` による安全なマイグレーション適用、`sqlc` による型安全なコード生成を両立できます。
 
 ---
 

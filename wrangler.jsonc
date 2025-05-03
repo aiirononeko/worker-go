@@ -5,5 +5,12 @@
   "compatibility_date": "2025-04-08",
   "build": {
     "command": "npm run build"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bulktrack-db",
+      "database_id": "d17fb255-2ce1-4e3d-bd57-64de4fe0c57b"
+    }
+  ]
 }
