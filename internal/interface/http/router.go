@@ -23,7 +23,8 @@ func NewRouter(deps RouterDependencies) http.Handler {
 	// Auth routes
 	if deps.AuthHandler != nil {
 		mux.HandleFunc("POST /v1/auth/device", deps.AuthHandler.ActivateDevice)
-		// TODO: 他の認証エンドポイント (refresh, logout) を AuthHandler に実装し、ここに追加
+		mux.HandleFunc("POST /v1/auth/refresh", deps.AuthHandler.RefreshToken)
+		// TODO: 他の認証エンドポイント (logout) を AuthHandler に実装し、ここに追加
 	}
 
 	// Menu routes

@@ -9,6 +9,69 @@ servers:
   - url: http://localhost:8787/v1
     description: Local development server
 paths:
+  # --- Authentication Endpoints --- #
+  /auth/device:
+    post:
+      summary: Activate a new device
+      operationId: activateDevice
+      tags:
+        - Auth
+      description: >
+        Registers a new device using its unique ID provided in the header
+        and returns initial access and refresh tokens.
+        This endpoint does not require authentication.
+      parameters:
+        - name: X-Device-Id
+          in: header
+          required: true
+          description: Unique identifier for the client device (UUID format recommended).
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Device activated successfully, tokens issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Bad Request (e.g., missing X-Device-Id header).
+        '500':
+          description: Internal Server Error.
+      security: [] # No authentication required for this endpoint
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      operationId: refreshToken
+      tags:
+        - Auth
+      description: >
+        Exchanges a valid refresh token for a new pair of access and refresh tokens.
+        This endpoint does not require bearer authentication but relies on the validity of the refresh token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Tokens refreshed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Bad Request (e.g., missing refresh_token in body).
+        '401':
+          description: Unauthorized (e.g., invalid or expired refresh token).
+        '500':
+          description: Internal Server Error.
+      security: [] # No authentication required for this endpoint
+
+  # --- Existing Workout Endpoints --- #
   /workouts/{id}:
     get:
       summary: Get workout details by ID
@@ -36,6 +99,37 @@ paths:
           description: Unauthorized
 components:
   schemas:
+    # --- Auth Schemas --- #
+    TokenResponse:
+      type: object
+      description: Response containing access and refresh tokens.
+      properties:
+        access_token:
+          type: string
+          description: The JWT access token.
+        refresh_token:
+          type: string
+          description: The JWT refresh token.
+        expires_in:
+          type: integer
+          format: int64
+          description: The validity duration of the access token in seconds.
+      required:
+        - access_token
+        - refresh_token
+        - expires_in
+
+    RefreshTokenRequest:
+      type: object
+      description: Request body for refreshing tokens.
+      properties:
+        refresh_token:
+          type: string
+          description: The JWT refresh token to be exchanged.
+      required:
+        - refresh_token
+
+    # --- Existing Workout Schemas --- #
     WorkoutDetail:
       type: object
       properties:
@@ -99,7 +193,9 @@ components:
       scheme: bearer
       bearerFormat: JWT
 security:
-  - bearerAuth: []
+  - bearerAuth: [] # Default security for endpoints not explicitly marked otherwise
 tags:
+  - name: Auth
+    description: Authentication related operations
   - name: Workouts
     description: Operations related to workouts

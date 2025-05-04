@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
 )
@@ -90,7 +91,9 @@ func extractBase64FromPEM(pemString, keyType string) string {
 }
 
 // GenerateTokens は新しいアクセストークンとリフレッシュトークンを EdDSA で生成します。
-func (s *jwtService) GenerateTokens(ctx context.Context, uid string) (string, string, time.Time, error) {
+// リフレッシュトークンには JTI を含めます。
+func (s *jwtService) GenerateTokens(ctx context.Context, uid string) (string, string, string, time.Time, error) {
+	// Access Token
 	accessExpiresAt := time.Now().Add(s.accessTokenTTL)
 	accessClaims := jwt.MapClaims{
 		"uid": uid,
@@ -100,27 +103,29 @@ func (s *jwtService) GenerateTokens(ctx context.Context, uid string) (string, st
 	accessToken := jwt.NewWithClaims(jwt.SigningMethodEdDSA, accessClaims)
 	accessTokenString, err := accessToken.SignedString(s.privateKey)
 	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to sign access token: %w", err)
+		return "", "", "", time.Time{}, fmt.Errorf("failed to sign access token: %w", err)
 	}
 
+	// Refresh Token (with JTI)
 	refreshExpiresAt := time.Now().Add(s.refreshTokenTTL)
+	refreshTokenJTI := uuid.NewString() // JTI を生成
 	refreshClaims := jwt.MapClaims{
 		"uid": uid,
-		// "jti": uuid.NewString(), // TODO: JTI
+		"jti": refreshTokenJTI, // JTI をクレームに追加
 		"exp": jwt.NewNumericDate(refreshExpiresAt),
 		"iat": jwt.NewNumericDate(time.Now()),
 	}
 	refreshToken := jwt.NewWithClaims(jwt.SigningMethodEdDSA, refreshClaims)
 	refreshTokenString, err := refreshToken.SignedString(s.privateKey)
 	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("failed to sign refresh token: %w", err)
+		return "", "", "", time.Time{}, fmt.Errorf("failed to sign refresh token: %w", err)
 	}
 
-	return accessTokenString, refreshTokenString, accessExpiresAt, nil
+	return accessTokenString, refreshTokenString, refreshTokenJTI, accessExpiresAt, nil
 }
 
-// VerifyToken は EdDSA 署名されたトークンを検証し、uid を返します。
-func (s *jwtService) VerifyToken(ctx context.Context, tokenString string) (string, error) {
+// VerifyToken は EdDSA 署名されたトークンを検証し、クレーム情報を返します。
+func (s *jwtService) VerifyToken(ctx context.Context, tokenString string) (*domainAuth.VerifiedTokenClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// 署名アルゴリズムが EdDSA であることを確認
 		if _, ok := token.Method.(*jwt.SigningMethodEd25519); !ok {
@@ -133,21 +138,30 @@ func (s *jwtService) VerifyToken(ctx context.Context, tokenString string) (strin
 	if err != nil {
 		if errors.Is(err, jwt.ErrTokenExpired) {
 			// TODO: ドメインエラー ErrTokenExpired に変換
-			return "", fmt.Errorf("token expired: %w", err)
+			return nil, fmt.Errorf("token expired: %w", err)
 		}
 		// TODO: ドメインエラー ErrInvalidToken に変換
-		return "", fmt.Errorf("invalid token parse error: %w", err)
+		return nil, fmt.Errorf("invalid token parse error: %w", err)
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		if uid, ok := claims["uid"].(string); ok {
-			return uid, nil
-		} else {
-			// TODO: ドメインエラー ErrInvalidToken に変換
-			return "", errors.New("invalid token: uid claim is missing or not a string")
+		uid, uidOK := claims["uid"].(string)
+		jti, jtiOK := claims["jti"].(string) // jti も取得・検証
+		_ = jtiOK                            // linter の未使用エラーを回避 (意図的にチェックしないため)
+
+		if !uidOK {
+			// TODO: ドメインエラー ErrInvalidToken
+			return nil, errors.New("invalid token: uid claim is missing or not a string")
 		}
+		// jti はリフレッシュトークン検証時に必須だが、アクセストークン検証時はなくても良い場合がある。
+		// ここでは jti がなくてもエラーにしないが、呼び出し元で必要ならチェックする。
+
+		return &domainAuth.VerifiedTokenClaims{
+			UID: uid,
+			JTI: jti, // jti がなくても空文字列が入る
+		}, nil
 	} else {
 		// TODO: ドメインエラー ErrInvalidToken に変換
-		return "", errors.New("invalid token (claims parsing or validation failed)")
+		return nil, errors.New("invalid token (claims parsing or validation failed)")
 	}
 }

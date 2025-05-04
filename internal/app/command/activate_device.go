@@ -29,15 +29,19 @@ type ActivateDeviceHandler interface {
 // --- Implementation ---
 
 type activateDeviceHandler struct {
-	deviceRepo device.DeviceRepository
-	jwtService domainAuth.JWTService
+	deviceRepo       device.DeviceRepository
+	jwtService       domainAuth.JWTService
+	refreshTokenRepo domainAuth.RefreshTokenRepository
+	refreshTokenTTL  time.Duration
 }
 
 // NewActivateDeviceHandler は新しい activateDeviceHandler を初期化します。
-func NewActivateDeviceHandler(deviceRepo device.DeviceRepository, jwtService domainAuth.JWTService) ActivateDeviceHandler {
+func NewActivateDeviceHandler(deviceRepo device.DeviceRepository, jwtService domainAuth.JWTService, refreshTokenRepo domainAuth.RefreshTokenRepository, refreshTokenTTL time.Duration) ActivateDeviceHandler {
 	return &activateDeviceHandler{
-		deviceRepo: deviceRepo,
-		jwtService: jwtService,
+		deviceRepo:       deviceRepo,
+		jwtService:       jwtService,
+		refreshTokenRepo: refreshTokenRepo,
+		refreshTokenTTL:  refreshTokenTTL,
 	}
 }
 
@@ -68,10 +72,19 @@ func (h *activateDeviceHandler) Handle(ctx context.Context, cmd ActivateDeviceCo
 
 	// 3. JWT を生成
 	uid := fmt.Sprintf("device:%s", dev.ID)
-	accessToken, refreshToken, expiresAt, err := h.jwtService.GenerateTokens(ctx, uid)
+	accessToken, refreshToken, refreshTokenJTI, expiresAt, err := h.jwtService.GenerateTokens(ctx, uid)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
+
+	// ★★★ 追加: 生成したリフレッシュトークン情報を KV に保存 ★★★
+	if err := h.refreshTokenRepo.Save(ctx, refreshTokenJTI, uid, h.refreshTokenTTL); err != nil {
+		// KV への保存失敗は致命的ではないかもしれないが、リフレッシュが機能しなくなる
+		// ログを出力し、エラーを返しされ、場合によっては成功としてトークンを返すことも検討可
+		fmt.Printf("Warning: failed to save refresh token to KV (jti: %s, uid: %s): %v\n", refreshTokenJTI, uid, err)
+		return nil, fmt.Errorf("failed to save refresh token state: %w", err)
+	}
+	// ★★★ ここまで ★★★
 
 	// 4. 結果を返す
 	return &ActivateDeviceResult{

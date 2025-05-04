@@ -12,5 +12,11 @@
       "database_name": "bulktrack-db",
       "database_id": "7943d0a5-3c02-4776-97d5-3c07a95754e7"
     }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "REFRESH_TOKENS_KV",
+      "id": "60a8548f69b244c094d2f86d5ca6e504"
+    }
   ]
 }
