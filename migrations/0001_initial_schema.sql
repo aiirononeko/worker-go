@@ -3,6 +3,7 @@
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS devices (
     id           TEXT PRIMARY KEY,                 -- deviceId (= Keychain UUID)
+    user_id      TEXT,                             -- nullable
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
