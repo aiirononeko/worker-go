@@ -50,14 +50,12 @@ type Muscle struct {
 }
 
 type Workout struct {
-	ID          string          `json:"id"`
-	DeviceID    string          `json:"device_id"`
-	MenuID      string          `json:"menu_id"`
-	PerformedAt string          `json:"performed_at"`
-	Rpe         sql.NullFloat64 `json:"rpe"`
-	Rir         sql.NullInt64   `json:"rir"`
-	CreatedAt   string          `json:"created_at"`
-	UpdatedAt   string          `json:"updated_at"`
+	ID          string `json:"id"`
+	DeviceID    string `json:"device_id"`
+	MenuID      string `json:"menu_id"`
+	PerformedAt string `json:"performed_at"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 type WorkoutSet struct {
@@ -66,5 +64,6 @@ type WorkoutSet struct {
 	ExerciseID string          `json:"exercise_id"`
 	Weight     float64         `json:"weight"`
 	Reps       int64           `json:"reps"`
-	Volume     sql.NullFloat64 `json:"volume"`
+	Rpe        sql.NullFloat64 `json:"rpe"`
+	Rir        sql.NullInt64   `json:"rir"`
 }

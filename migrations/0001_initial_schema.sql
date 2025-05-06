@@ -1,5 +1,5 @@
 -- ----------------------------------------------------------
--- 0. OPTIONAL: device 一覧（統計や失効管理に使う場合）
+-- 0. OPTIONAL: device 一覧
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS devices (
     id           TEXT PRIMARY KEY,                 -- deviceId (= Keychain UUID)
@@ -55,8 +55,6 @@ CREATE TABLE IF NOT EXISTS workouts (
     device_id    TEXT NOT NULL,                    -- パーティションキー
     menu_id      TEXT NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
     performed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    rpe          REAL    CHECK (rpe BETWEEN 1 AND 10),
-    rir          INTEGER CHECK (rir BETWEEN 0 AND 5),
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (device_id) REFERENCES devices(id)
@@ -74,7 +72,8 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     exercise_id TEXT NOT NULL REFERENCES exercises(id),
     weight      REAL    NOT NULL CHECK (weight >= 0),
     reps        INTEGER NOT NULL CHECK (reps   >= 0),
-    volume      REAL GENERATED ALWAYS AS (weight * reps) STORED
+    rpe         REAL    CHECK (rpe BETWEEN 1 AND 10),
+    rir         INTEGER CHECK (rir BETWEEN 0 AND 5)
 );
 
 CREATE INDEX IF NOT EXISTS idx_set_workout_id  ON workout_sets(workout_id);

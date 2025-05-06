@@ -168,10 +168,10 @@ CREATE TABLE IF NOT EXISTS menus (
 > 環境変数 `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` を `wrangler secret` で登録して下さい。
 
 1. **Prerequisites** (Go ≥ 1.23, wrangler ≥ 4, sqlc, …)
-2. `wrangler d1 create bulktrack-db`
-3. `wrangler d1 migrations apply bulktrack-db --local`
+2. `npx wrangler d1 create bulktrack-db`
+3. `npx wrangler d1 migrations apply bulktrack-db --local`
 4. `sqlc generate -f internal/infrastructure/persistence/d1/sqlc.yaml`
-5. `wrangler dev`
+5. `npm start`
 
 ---
 
