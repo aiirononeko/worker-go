@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"log"
 
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
 )
@@ -36,30 +37,35 @@ func NewLogoutHandler(jwtService domainAuth.JWTService, refreshTokenRepo domainA
 }
 
 func (h *logoutHandler) Handle(ctx context.Context, cmd LogoutCommand) error {
+	log.Printf("INFO: Starting logout process.") // リフレッシュトークン自体はログに出さない
+
 	if cmd.RefreshToken == "" {
+		log.Printf("ERROR: Refresh token is empty in LogoutCommand")
 		return fmt.Errorf("refresh token is required")
 	}
 
-	// 1. リフレッシュトークンをパースして JTI (JWT ID) を取得
+	log.Printf("INFO: Verifying refresh token for logout.")
 	claims, err := h.jwtService.VerifyToken(ctx, cmd.RefreshToken)
 	if err != nil {
-		// トークンが無効（期限切れ、不正な形式など）でも、クライアントはログアウトしたいはずなので、
-		// エラーにはせず、単に削除処理に進まない（あるいはログだけ出す）という考え方もある。
-		// ここでは、有効なリフレッシュトークンでないとKVから削除できないためエラーとする。
-		return fmt.Errorf("failed to verify refresh token: %w", err)
+		// トークンが無効でもログアウト処理自体はエラーにしない場合もあるが、
+		// KVから削除する対象を特定できないため、ここではエラーとする。
+		log.Printf("ERROR: Failed to verify refresh token during logout: %v", err)
+		return fmt.Errorf("failed to verify refresh token for logout: %w", err)
 	}
 
-	// リフレッシュトークンには JTI が必須
 	if claims.JTI == "" {
-		return fmt.Errorf("invalid refresh token: missing jti claim")
+		log.Printf("ERROR: Invalid refresh token during logout: missing JTI claim. UID from token: %s", claims.UID)
+		return fmt.Errorf("invalid refresh token for logout: missing jti claim")
 	}
+	log.Printf("INFO: Refresh token verified for logout. JTI: %s, UID: %s", claims.JTI, claims.UID)
 
-	// 2. RefreshTokenRepository を使って KV ストアから JTI を削除
+	log.Printf("INFO: Deleting refresh token (JTI: %s) from repository for logout.", claims.JTI)
 	if err := h.refreshTokenRepo.Delete(ctx, claims.JTI); err != nil {
-		// 既に削除されている場合や、何らかの理由でKV操作に失敗した場合
-		// ログアウト処理としては「成功」として扱っても良いかもしれないが、ここではエラーを返す
+		// 既に削除されている場合やKV操作失敗もエラーとして記録
+		log.Printf("ERROR: Failed to delete refresh token (JTI: %s) from repository during logout: %v", claims.JTI, err)
 		return fmt.Errorf("failed to delete refresh token from repository: %w", err)
 	}
 
+	log.Printf("INFO: Successfully logged out by deleting refresh token (JTI: %s) for UID: %s", claims.JTI, claims.UID)
 	return nil
 }

@@ -1,6 +1,6 @@
 # BulkTrack API – Backend (Go × Cloudflare Workers)
 
-**BulkTrack** は *“トレーニングボリューム”* にフォーカスした筋トレ記録アプリのバックエンドです。
+**BulkTrack** は *"トレーニングボリューム"* にフォーカスした筋トレ記録アプリのバックエンドです。
 
 - **iOS (Swift / SwiftUI / Core Data & Transferable)** と将来の **Web クライアント** が **同じ REST API** を呼び出します。
 - バックエンドは **Go (公式 Wasm compiler) + Cloudflare Workers + Cloudflare D1**。
@@ -55,9 +55,21 @@ graph TD
 
 依存方向は **Domain → Application → Interface**。Go import も同方向のみ。
 
+## 🔌 Middleware Architecture
+
+The application utilizes a middleware chaining approach for handling cross-cutting concerns like CORS, logging, and authentication.
+
+- **Global Middlewares**: Applied to most routes.
+    - `CORS`: Handles Cross-Origin Resource Sharing headers (allows all origins in development). Defined in `internal/interface/http/middleware/cors.go`.
+    - `Logging`: Logs basic HTTP request/response details (method, path, status, duration). Defined in `internal/interface/http/middleware/logging.go`.
+- **Route-Specific Middlewares**: Applied only to specific routes requiring them.
+    - `RequireAuth`: Verifies the `Authorization: Bearer <token>` header using `JWTService` and injects the `uid` (e.g., `device:<uuid>`) into the request context. Defined in `internal/interface/http/middleware/auth.go`.
+- **Chaining**: Implemented using a helper function `middleware.Chain` in `internal/interface/http/middleware/middleware.go`.
+- **Router Configuration**: Defined in `internal/interface/http/router.go`, which allows specifying middlewares per route. Global middlewares (CORS, Logging) are applied automatically to most endpoints, while `RequireAuth` is applied selectively to protected routes (e.g., `/v1/menus`) in `cmd/worker/main.go`. Endpoints under `/v1/auth/*` and `/ping` currently bypass the `RequireAuth` middleware but include CORS and Logging.
+
 ---
 
-## 📁 Directory Skeleton
+## 📁 Directory Skeleton
 
 ```
 bulktrack-api/
@@ -78,12 +90,12 @@ bulktrack-api/
 │   │       ├── middleware/
 │   │       │   └── auth.go
 │   │       └── handler/
-│   ├── infrastructure/
-│   │   ├── persistence/
-│   │   │   └── d1/
-│   │   └── auth/
-│   └── platform/
-├── migrations/
+│   │   ├── infrastructure/
+│   │   │   ├── persistence/
+│   │   │   │   └── d1/
+│   │   │   └── auth/
+│   │   └── platform/
+│   └── migrations/
 ├── scripts/
 ├── wrangler.jsonc
 ├── schema.sql               # ← デバイスIDベーススキーマ
@@ -93,7 +105,7 @@ bulktrack-api/
 
 ---
 
-## 📦 Data Modeling (抜粋)
+## 📦 Data Modeling (抜粋)
 
 デフォルトパーティションは **`device_id`**。
 
@@ -114,14 +126,20 @@ CREATE TABLE workouts (
   -- …
   FOREIGN KEY (device_id) REFERENCES devices(id)
 );
+
+CREATE TABLE IF NOT EXISTS menus (
+    id          TEXT PRIMARY KEY,
+    device_id   TEXT NOT NULL,                     -- パーティションキー (NOTE: Currently, queries are based on device_id only)
+    name        TEXT NOT NULL,
+    description TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (device_id) REFERENCES devices(id)
+);
 ```
 
 マイグレーションポリシーは README 冒頭の戦略セクションを参照。
-
----
-
-以下を追記しようとしましたが、README 内で該当セクションの見出しが一致せず自動挿入に失敗しました 🙇‍♂️  
-ひとまず **流れとリフレッシュ方式の要点**をテキストでお伝えします。必要であればどの位置へ入れるかご指定いただければ再度組み込みます！
 
 ---
 
@@ -145,50 +163,33 @@ CREATE TABLE workouts (
 
 ---
 
-## 🔐 Auth Middleware (excerpt)
-
-```go
-// Verify stateless JWT issued by the Worker itself.
-// uid claim has the form "device:<uuid>" or "user:<uuid>".
-func RequireAuth(next http.Handler) http.Handler {
-  return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-    raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-    if raw == "" {
-      http.Error(w, "unauthorized", http.StatusUnauthorized)
-      return
-    }
-
-    token, err := jwt.Parse(raw, jwt.WithKey(pubKey))
-    if err != nil || !token.Valid {
-      http.Error(w, "unauthorized", http.StatusUnauthorized)
-      return
-    }
-
-    claims := token.Claims.(jwt.MapClaims)
-    uid := claims["uid"].(string)
-    ctx := context.WithValue(r.Context(), auth.UIDKey, uid)
-    next.ServeHTTP(w, r.WithContext(ctx))
-  })
-}
-```
-
-JWKS／署名キーは Workers KV に 5 min TTL でキャッシュ。
-
----
-
-## 🛠️ Build & Local Development
+## 🛠️ Build & Local Development
 
 > 環境変数 `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` を `wrangler secret` で登録して下さい。
 
-1. **Prerequisites** (Go ≥ 1.23, wrangler ≥ 4, sqlc, …)
+1. **Prerequisites** (Go ≥ 1.23, wrangler ≥ 4, sqlc, …)
 2. `wrangler d1 create bulktrack-db`
 3. `wrangler d1 migrations apply bulktrack-db --local`
-4. `sqlc generate`
+4. `sqlc generate -f internal/infrastructure/persistence/d1/sqlc.yaml`
 5. `wrangler dev`
 
 ---
 
-## 🚚 Data Transfer with iOS Transferable
+## 🪵 Logging Strategy (PoC Phase)
+
+- **Goal**: Facilitate error investigation during the Proof of Concept phase.
+- **Approach**: Utilize the standard Go `log` package (`log.Printf`, etc.).
+    - Logs are automatically directed to Cloudflare Workers' logging system (`wrangler tail`).
+    - Focus on logging detailed error information (operation, relevant IDs, error messages) primarily within service and repository layers where errors occur.
+    - Minimal INFO level logging for key process steps (e.g., request handling start/end, successful operations).
+- **Current Implementation**:
+    - Logging middleware (`internal/interface/http/middleware/logging.go`) records basic HTTP request/response info (method, path, status, duration, user-agent).
+    - Key handlers, services, and repositories include `log.Printf` calls for errors and significant events.
+- **Future Considerations**: Introduce structured logging (e.g., `slog`) and context-based tracing (request IDs) as the application complexity grows.
+
+---
+
+## 🚚 Data Transfer with iOS Transferable
 
 1. 送信端末: `Settings → Data Export` で AirDrop / QR を起動 → Transferable payload (= signed backup JSON) を生成
 2. 受信端末: AirDrop/QR 読み込み → `Transferable.import()` → バックアップ JSON を POST `/v1/import` ( Authorization なし )
@@ -198,11 +199,11 @@ JWKS／署名キーは Workers KV に 5 min TTL でキャッシュ。
 
 ---
 
-## ✅ Test / CI Pipeline
+## ✅ Test / CI Pipeline
 
 | Stage | What |
 |-------|------|
 | **Unit** | Domain logic — table‑driven, `-race -cover` |
 | **Use‑Case** | App layer with memory repo DI |
 | **Contract** | Dredd / Prism vs OpenAPI |
-| **Integration** | GitHub Actions: `wrangler d1` local + Worker |
+| **Integration** | GitHub Actions: `wrangler d1` local + Worker |

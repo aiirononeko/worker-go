@@ -22,23 +22,19 @@ func NewListMenusHandler(lms query.ListMenusQueryService) *ListMenusHandler {
 
 // ServeHTTP は GET /v1/menus リクエストを処理します。
 func (h *ListMenusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// --- サービスの呼び出し ---
+	log.Printf("INFO: Received ListMenus request. Path: %s", r.URL.Path)
+
 	menuDTOs, err := h.listMenusService.Execute(r.Context())
 	if err != nil {
-		// エラーロギング
-		// TODO: エラーの種類に応じてステータスコードを変える (例: Not Found など)
-		// サービス層で返されるエラーが fmt.Errorf でラップされているため、
-		// errors.Is や errors.As を使って特定のドメインエラーやアプリケーションエラーを判定できる。
-		log.Printf("Error fetching menus: %v", err)
+		log.Printf("ERROR: Failed to execute ListMenus service: %v. Path: %s", err, r.URL.Path)
 		http.Error(w, "Failed to retrieve menus", http.StatusInternalServerError)
 		return
 	}
 
-	// --- 成功レスポンス (JSON) ---
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(menuDTOs); err != nil {
-		log.Printf("Error encoding menus to JSON: %v", err)
-		return
+		log.Printf("ERROR: Failed to encode ListMenus response: %v. Path: %s", err, r.URL.Path)
 	}
+	log.Printf("INFO: Successfully processed ListMenus request. Path: %s. Returned %d menus.", r.URL.Path, len(menuDTOs))
 }

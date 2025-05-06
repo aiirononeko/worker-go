@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -28,7 +29,10 @@ func NewAuthHandler(activateDeviceCmd appCmd.ActivateDeviceHandler, refreshToken
 // POST /v1/auth/device
 func (h *AuthHandler) ActivateDevice(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.Header.Get("X-Device-Id")
+	log.Printf("INFO: Received ActivateDevice request. DeviceID from header: %s", deviceID) // deviceIDはログに出しても問題ないと判断
+
 	if deviceID == "" {
+		log.Printf("WARN: ActivateDevice request failed: X-Device-Id header is required. Path: %s", r.URL.Path)
 		http.Error(w, "X-Device-Id header is required", http.StatusBadRequest)
 		return
 	}
@@ -37,6 +41,7 @@ func (h *AuthHandler) ActivateDevice(w http.ResponseWriter, r *http.Request) {
 	cmd := appCmd.ActivateDeviceCommand{DeviceID: deviceID}
 	result, err := h.activateDeviceCmd.Handle(r.Context(), cmd)
 	if err != nil {
+		log.Printf("ERROR: Failed to handle ActivateDevice command for DeviceID %s: %v", deviceID, err)
 		http.Error(w, "Failed to activate device", http.StatusInternalServerError)
 		return
 	}
@@ -55,8 +60,9 @@ func (h *AuthHandler) ActivateDevice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		log.Printf("ERROR: Failed to encode ActivateDevice response for DeviceID %s: %v", deviceID, err)
 	}
+	log.Printf("INFO: Successfully processed ActivateDevice request for DeviceID %s.", deviceID)
 }
 
 // RefreshTokenRequest はリフレッシュトークンリクエストのボディを表します。
@@ -74,13 +80,15 @@ type RefreshTokenResponse struct {
 // RefreshToken は受け取ったリフレッシュトークンを検証し、新しいトークンペアを返します。
 // POST /v1/auth/refresh
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
-	// 1. リクエストボディをデコード
+	log.Printf("INFO: Received RefreshToken request. Path: %s", r.URL.Path)
 	var req RefreshTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("WARN: RefreshToken request failed: Invalid request body. Path: %s, Error: %v", r.URL.Path, err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.RefreshToken == "" {
+	if req.RefreshToken == "" { // トークン自体はログに出さない
+		log.Printf("WARN: RefreshToken request failed: refresh_token is required. Path: %s", r.URL.Path)
 		http.Error(w, "refresh_token is required", http.StatusBadRequest)
 		return
 	}
@@ -89,6 +97,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	cmd := appCmd.RefreshTokenCommand{RefreshToken: req.RefreshToken}
 	result, err := h.refreshTokenCmd.Handle(r.Context(), cmd)
 	if err != nil {
+		log.Printf("ERROR: Failed to handle RefreshToken command: %v. Path: %s", err, r.URL.Path) // エラーにJTIやUIDが含まれていればそれも記録される
 		http.Error(w, "Failed to refresh token", http.StatusInternalServerError)
 		return
 	}
@@ -103,8 +112,9 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		log.Printf("ERROR: Failed to encode RefreshToken response: %v. Path: %s", err, r.URL.Path)
 	}
+	log.Printf("INFO: Successfully processed RefreshToken request. Path: %s", r.URL.Path)
 }
 
 // LogoutRequest はログアウトリクエストのボディを表します。
@@ -115,13 +125,16 @@ type LogoutRequest struct {
 // Logout は受け取ったリフレッシュトークンを無効化します。
 // POST /v1/auth/logout
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	// 1. リクエストボディをデコード
+	log.Printf("INFO: Received Logout request. Path: %s", r.URL.Path)
+
 	var req LogoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("WARN: Logout request failed: Invalid request body. Path: %s, Error: %v", r.URL.Path, err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if req.RefreshToken == "" {
+	if req.RefreshToken == "" { // トークン自体はログに出さない
+		log.Printf("WARN: Logout request failed: refresh_token is required. Path: %s", r.URL.Path)
 		http.Error(w, "refresh_token is required", http.StatusBadRequest)
 		return
 	}
@@ -129,14 +142,12 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	// 2. Application 層の LogoutCommand を呼び出す
 	cmd := appCmd.LogoutCommand{RefreshToken: req.RefreshToken}
 	if err := h.logoutCmd.Handle(r.Context(), cmd); err != nil {
-		// エラーの種類に応じてクライアントに返すステータスコードを検討する
-		// 例えば、トークンが無効だった場合は 400 Bad Request や 401 Unauthorized など
-		// KV操作失敗は 500 Internal Server Error
-		// ここでは詳細なエラーハンドリングは省略し、一律 500 を返す
+		log.Printf("ERROR: Failed to handle Logout command: %v. Path: %s", err, r.URL.Path)
 		http.Error(w, "Failed to logout", http.StatusInternalServerError)
 		return
 	}
 
 	// 3. 成功レスポンス (No Content)
 	w.WriteHeader(http.StatusNoContent)
+	log.Printf("INFO: Successfully processed Logout request. Path: %s", r.URL.Path)
 }

@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
@@ -44,52 +45,51 @@ func NewRefreshTokenHandler(jwtService domainAuth.JWTService, refreshTokenRepo d
 }
 
 func (h *refreshTokenHandler) Handle(ctx context.Context, cmd RefreshTokenCommand) (*RefreshTokenResult, error) {
-	// log.Printf("[RefreshTokenHandler] Starting refresh...") // ログ削除
+	log.Printf("INFO: Starting token refresh process.") // リフレッシュトークン自体はログに出さない
 
-	// 1. Refresh Token を検証し、クレームを取得
+	if cmd.RefreshToken == "" {
+		log.Printf("ERROR: Refresh token is empty in RefreshTokenCommand")
+		return nil, fmt.Errorf("refresh token is required")
+	}
+
+	log.Printf("INFO: Verifying provided refresh token.")
 	claims, err := h.jwtService.VerifyToken(ctx, cmd.RefreshToken)
 	if err != nil {
-		// log.Printf("[RefreshTokenHandler] Error verifying token: %v", err) // ログ削除
+		log.Printf("ERROR: Failed to verify refresh token: %v", err)
 		return nil, fmt.Errorf("invalid refresh token: %w", err)
 	}
 	if claims.JTI == "" {
-		// log.Printf("[RefreshTokenHandler] Invalid token: missing jti claim...") // ログ削除
+		log.Printf("ERROR: Invalid refresh token: missing JTI claim. UID from token: %s", claims.UID)
 		return nil, fmt.Errorf("invalid refresh token: missing jti claim")
 	}
-	// log.Printf("[RefreshTokenHandler] Token verified...") // ログ削除
+	log.Printf("INFO: Refresh token verified. JTI: %s, UID: %s", claims.JTI, claims.UID)
 
-	// 2. KV ストアでトークンの有効性を検証
+	log.Printf("INFO: Validating refresh token (JTI: %s) in KV store for UID: %s", claims.JTI, claims.UID)
 	if err := h.refreshTokenRepo.Validate(ctx, claims.JTI, claims.UID); err != nil {
-		// log.Printf("[RefreshTokenHandler] Error validating token in KV...") // ログ削除
+		log.Printf("ERROR: Refresh token validation failed in KV store for JTI %s, UID %s: %v", claims.JTI, claims.UID, err)
 		return nil, fmt.Errorf("refresh token validation failed: %w", err)
 	}
-	// log.Printf("[RefreshTokenHandler] Token validated in KV...") // ログ削除
 
-	// --- トークン回転 ---
-
-	// 3. 古いリフレッシュトークンを KV から削除
+	log.Printf("INFO: Deleting old refresh token (JTI: %s) from KV store.", claims.JTI)
 	if err := h.refreshTokenRepo.Delete(ctx, claims.JTI); err != nil {
-		// 削除失敗は警告ログに留める (本番ではより詳細なロギング/監視を推奨)
-		fmt.Printf("Warning: failed to delete old refresh token (jti: %s) during rotation: %v\n", claims.JTI, err)
+		// 削除失敗は警告ログに留めるが、処理は続行する (トークン回転の主要な目的は新しいトークンの発行)
+		log.Printf("WARN: Failed to delete old refresh token (JTI: %s) during rotation, but proceeding: %v", claims.JTI, err)
 	}
 
-	// 4. 新しいトークンペアを生成
+	log.Printf("INFO: Generating new token pair for UID: %s", claims.UID)
 	newAccessToken, newRefreshToken, newJTI, expiresAt, err := h.jwtService.GenerateTokens(ctx, claims.UID)
 	if err != nil {
-		// log.Printf("[RefreshTokenHandler] Error generating new tokens...") // ログ削除
+		log.Printf("ERROR: Failed to generate new tokens for UID %s: %v", claims.UID, err)
 		return nil, fmt.Errorf("failed to generate new tokens: %w", err)
 	}
-	// log.Printf("[RefreshTokenHandler] New tokens generated...") // ログ削除
 
-	// 5. 新しいリフレッシュトークン情報を KV に保存
+	log.Printf("INFO: Saving new refresh token to KV for new JTI: %s, UID: %s", newJTI, claims.UID)
 	if err := h.refreshTokenRepo.Save(ctx, newJTI, claims.UID, h.refreshTokenTTL); err != nil {
-		// log.Printf("[RefreshTokenHandler] Error saving new refresh token to KV...") // ログ削除
+		log.Printf("ERROR: Failed to save new refresh token to KV for new JTI %s, UID %s: %v", newJTI, claims.UID, err)
 		return nil, fmt.Errorf("failed to save new refresh token: %w", err)
 	}
-	// log.Printf("[RefreshTokenHandler] New refresh token saved to KV...") // ログ削除
 
-	// 6. 結果を返す
-	// log.Printf("[RefreshTokenHandler] Refresh successful...") // ログ削除
+	log.Printf("INFO: Successfully refreshed tokens for UID: %s. New JTI: %s", claims.UID, newJTI)
 	return &RefreshTokenResult{
 		AccessToken:  newAccessToken,
 		RefreshToken: newRefreshToken,

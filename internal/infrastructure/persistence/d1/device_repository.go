@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/aiirononeko/bulktrack-api/internal/domain/device"
@@ -19,8 +20,12 @@ func NewD1DeviceRepository(db *sql.DB) device.DeviceRepository {
 	return &d1DeviceRepository{db: db}
 }
 
+const deviceSqliteTimeFormat = "2006-01-02 15:04:05"
+
 // Save はデバイス情報を D1 に保存します (INSERT ON CONFLICT UPDATE)。
 func (r *d1DeviceRepository) Save(ctx context.Context, d *device.Device) error {
+	log.Printf("INFO: Attempting to save device. DeviceID: %s, UserID: %v", d.ID, d.UserID)
+
 	query := `
 	INSERT INTO devices (id, user_id, created_at, last_seen_at)
 	VALUES (?, ?, ?, ?)
@@ -36,9 +41,8 @@ func (r *d1DeviceRepository) Save(ctx context.Context, d *device.Device) error {
 	} // Valid のデフォルトは false なので、nil の場合は何もしなくて良い
 
 	// time.Time を SQLite が解釈できる文字列形式 (YYYY-MM-DD HH:MM:SS) に変換
-	const sqliteTimeFormat = "2006-01-02 15:04:05"
-	createdAtStr := d.CreatedAt.UTC().Format(sqliteTimeFormat)   // UTC に変換してからフォーマット
-	lastSeenAtStr := d.LastSeenAt.UTC().Format(sqliteTimeFormat) // UTC に変換してからフォーマット
+	createdAtStr := d.CreatedAt.UTC().Format(deviceSqliteTimeFormat)   // UTC に変換してからフォーマット
+	lastSeenAtStr := d.LastSeenAt.UTC().Format(deviceSqliteTimeFormat) // UTC に変換してからフォーマット
 
 	_, err := r.db.ExecContext(ctx, query,
 		d.ID,
@@ -47,15 +51,17 @@ func (r *d1DeviceRepository) Save(ctx context.Context, d *device.Device) error {
 		lastSeenAtStr, // 文字列形式で渡す
 	)
 
-	// TODO: エラーハンドリング (制約違反など)
 	if err != nil {
-		return fmt.Errorf("d1 exec failed: %w", err)
+		log.Printf("ERROR: Failed to save device %s to D1: %v", d.ID, err)
+		return fmt.Errorf("d1 exec failed for device %s: %w", d.ID, err)
 	}
+	log.Printf("INFO: Successfully saved device. DeviceID: %s", d.ID)
 	return nil
 }
 
 // FindByID は D1 から ID でデバイスを検索します。
 func (r *d1DeviceRepository) FindByID(ctx context.Context, id string) (*device.Device, error) {
+	log.Printf("INFO: Attempting to find device by ID: %s", id)
 	query := `
 	SELECT id, user_id, created_at, last_seen_at
 	FROM devices
@@ -75,10 +81,11 @@ func (r *d1DeviceRepository) FindByID(ctx context.Context, id string) (*device.D
 
 	if err != nil {
 		if err == sql.ErrNoRows {
+			log.Printf("INFO: No device found for ID: %s", id)
 			return nil, nil // 見つからない
 		}
-		// TODO: その他のDBエラーハンドリング
-		return nil, fmt.Errorf("d1 scan failed: %w", err)
+		log.Printf("ERROR: Failed to find device by ID %s from D1: %v", id, err)
+		return nil, fmt.Errorf("d1 scan failed for device ID %s: %w", id, err)
 	}
 
 	// sql.NullString から *string へ変換
@@ -89,17 +96,19 @@ func (r *d1DeviceRepository) FindByID(ctx context.Context, id string) (*device.D
 	}
 
 	// 文字列から time.Time へパース
-	const sqliteTimeFormat = "2006-01-02 15:04:05"
-	createdAt, err := time.Parse(sqliteTimeFormat, createdAtStr)
+	createdAt, err := time.Parse(deviceSqliteTimeFormat, createdAtStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse created_at: %w", err)
+		log.Printf("WARN: Failed to parse created_at string '%s' for Device ID %s: %v", createdAtStr, id, err)
+		return nil, fmt.Errorf("failed to parse created_at for device ID %s: %w", id, err)
 	}
-	lastSeenAt, err := time.Parse(sqliteTimeFormat, lastSeenAtStr)
+	lastSeenAt, err := time.Parse(deviceSqliteTimeFormat, lastSeenAtStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse last_seen_at: %w", err)
+		log.Printf("WARN: Failed to parse last_seen_at string '%s' for Device ID %s: %v", lastSeenAtStr, id, err)
+		return nil, fmt.Errorf("failed to parse last_seen_at for device ID %s: %w", id, err)
 	}
 	d.CreatedAt = createdAt
 	d.LastSeenAt = lastSeenAt
 
+	log.Printf("INFO: Successfully found device by ID: %s. UserID: %v", id, d.UserID)
 	return d, nil
 }

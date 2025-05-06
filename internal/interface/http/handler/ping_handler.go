@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/aiirononeko/bulktrack-api/internal/app/query"
@@ -8,24 +10,24 @@ import (
 
 // PingHandler は /ping エンドポイントのリクエストを処理します。
 type PingHandler struct {
-	pingQueryService query.PingQueryService // Application レイヤーのサービスに依存
+	pingService query.PingQueryService
 }
 
 // NewPingHandler は PingHandler の新しいインスタンスを生成します。
-func NewPingHandler(pingQueryService query.PingQueryService) *PingHandler {
-	return &PingHandler{pingQueryService: pingQueryService}
+func NewPingHandler(ps query.PingQueryService) *PingHandler {
+	return &PingHandler{pingService: ps}
 }
 
+// ServeHTTP は GET /ping リクエストを処理します。
 func (h *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// サービスメソッドを呼び出す (Context を渡す)
-	// r.Context() でリクエストに紐づく Context を取得できる
-	msg, err := h.pingQueryService.Ping(r.Context())
-	if err != nil {
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		return
-	}
+	log.Printf("INFO: Received Ping request. Path: %s", r.URL.Path)
 
-	// レスポンスを書き込む
+	result := h.pingService.Execute(r.Context())
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(msg))
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		log.Printf("ERROR: Failed to encode Ping response: %v. Path: %s", err, r.URL.Path)
+	}
+	log.Printf("INFO: Successfully processed Ping request. Path: %s", r.URL.Path)
 }

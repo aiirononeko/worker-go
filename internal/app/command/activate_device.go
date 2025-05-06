@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
@@ -46,47 +47,51 @@ func NewActivateDeviceHandler(deviceRepo device.DeviceRepository, jwtService dom
 }
 
 func (h *activateDeviceHandler) Handle(ctx context.Context, cmd ActivateDeviceCommand) (*ActivateDeviceResult, error) {
-	// DeviceID のバリデーション (簡易)
+	log.Printf("INFO: Starting device activation for DeviceID: %s", cmd.DeviceID)
+
 	if cmd.DeviceID == "" {
+		log.Printf("ERROR: Invalid device ID in ActivateDeviceCommand: DeviceID is empty")
 		return nil, fmt.Errorf("invalid device ID")
 	}
 
-	// 1. デバイスを検索または作成
+	log.Printf("INFO: Finding or creating device for DeviceID: %s", cmd.DeviceID)
 	existingDevice, err := h.deviceRepo.FindByID(ctx, cmd.DeviceID)
 	if err != nil {
+		log.Printf("ERROR: Failed to find device by ID %s: %v", cmd.DeviceID, err)
 		return nil, fmt.Errorf("failed to find device: %w", err)
 	}
 
 	var dev *device.Device
 	if existingDevice == nil {
+		log.Printf("INFO: No existing device found for DeviceID %s, creating new one.", cmd.DeviceID)
 		dev = device.NewDevice(cmd.DeviceID, nil)
 	} else {
+		log.Printf("INFO: Existing device found for DeviceID %s, updating last seen.", cmd.DeviceID)
 		dev = existingDevice
 		dev.UpdateLastSeen()
 	}
 
-	// 2. デバイス情報を保存
+	log.Printf("INFO: Saving device information for DeviceID: %s (User ID: %v)", dev.ID, dev.UserID)
 	if err := h.deviceRepo.Save(ctx, dev); err != nil {
+		log.Printf("ERROR: Failed to save device for DeviceID %s: %v", dev.ID, err)
 		return nil, fmt.Errorf("failed to save device: %w", err)
 	}
 
-	// 3. JWT を生成
 	uid := fmt.Sprintf("device:%s", dev.ID)
+	log.Printf("INFO: Generating JWT for UID: %s", uid)
 	accessToken, refreshToken, refreshTokenJTI, expiresAt, err := h.jwtService.GenerateTokens(ctx, uid)
 	if err != nil {
+		log.Printf("ERROR: Failed to generate tokens for UID %s: %v", uid, err)
 		return nil, fmt.Errorf("failed to generate tokens: %w", err)
 	}
 
-	// ★★★ 追加: 生成したリフレッシュトークン情報を KV に保存 ★★★
+	log.Printf("INFO: Saving refresh token to KV for JTI: %s, UID: %s", refreshTokenJTI, uid)
 	if err := h.refreshTokenRepo.Save(ctx, refreshTokenJTI, uid, h.refreshTokenTTL); err != nil {
-		// KV への保存失敗は致命的ではないかもしれないが、リフレッシュが機能しなくなる
-		// ログを出力し、エラーを返しされ、場合によっては成功としてトークンを返すことも検討可
-		fmt.Printf("Warning: failed to save refresh token to KV (jti: %s, uid: %s): %v\n", refreshTokenJTI, uid, err)
+		log.Printf("ERROR: Failed to save refresh token to KV for JTI %s, UID %s: %v", refreshTokenJTI, uid, err)
 		return nil, fmt.Errorf("failed to save refresh token state: %w", err)
 	}
-	// ★★★ ここまで ★★★
 
-	// 4. 結果を返す
+	log.Printf("INFO: Successfully activated device and generated tokens for DeviceID: %s (UID: %s)", cmd.DeviceID, uid)
 	return &ActivateDeviceResult{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,

@@ -3,6 +3,7 @@ package d1
 import (
 	"context" // For sql.NullString & sql.OpenDB
 	// Need this for sql.DBTX if not aliased
+	"fmt"
 	"log"  // For error logging during conversion
 	"time" // For time parsing
 
@@ -29,18 +30,19 @@ const sqliteTimeFormat = "2006-01-02 15:04:05"
 func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID string) ([]menu.Menu, error) {
 	q := db.New(r.db)
 
-	// sqlc の生成コードを呼び出す (メソッド名を ListMenusByDeviceId に変更)
 	rows, err := q.ListMenusByDeviceId(ctx, deviceID)
 	if err != nil {
-		return nil, err
+		// D1クエリ実行時のエラーをログに出力
+		log.Printf("ERROR: Failed to execute ListMenusByDeviceId query for DeviceID %s: %v", deviceID, err)
+		return nil, fmt.Errorf("d1 query ListMenusByDeviceId for device %s failed: %w", deviceID, err) // エラーをラップ
 	}
 
 	menus := make([]menu.Menu, 0, len(rows))
 	for _, row := range rows {
 		id, err := uuid.Parse(row.ID)
 		if err != nil {
-			log.Printf("Error parsing UUID string '%s': %v", row.ID, err)
-			continue
+			log.Printf("WARN: Failed to parse Menu ID UUID string '%s' for DeviceID %s: %v", row.ID, deviceID, err)
+			continue // この行をスキップ
 		}
 
 		var description *string
@@ -51,19 +53,19 @@ func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID strin
 
 		createdAt, err := time.Parse(sqliteTimeFormat, row.CreatedAt)
 		if err != nil {
-			log.Printf("Error parsing CreatedAt string '%s': %v", row.CreatedAt, err)
+			log.Printf("WARN: Failed to parse CreatedAt string '%s' for Menu ID %s, DeviceID %s: %v", row.CreatedAt, row.ID, deviceID, err)
 			continue
 		}
 
 		updatedAt, err := time.Parse(sqliteTimeFormat, row.UpdatedAt)
 		if err != nil {
-			log.Printf("Error parsing UpdatedAt string '%s': %v", row.UpdatedAt, err)
+			log.Printf("WARN: Failed to parse UpdatedAt string '%s' for Menu ID %s, DeviceID %s: %v", row.UpdatedAt, row.ID, deviceID, err)
 			continue
 		}
 
 		menus = append(menus, menu.Menu{
 			ID:          id,
-			DeviceID:    row.DeviceID, // UserID から DeviceID に変更し、row から取得
+			DeviceID:    row.DeviceID,
 			Name:        row.Name,
 			Description: description,
 			SortOrder:   int(row.SortOrder),
@@ -71,6 +73,6 @@ func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID strin
 			UpdatedAt:   updatedAt,
 		})
 	}
-
+	log.Printf("INFO: MenuRepository.ListMenusByDeviceId for DeviceID %s found %d menus.", deviceID, len(menus))
 	return menus, nil
 }

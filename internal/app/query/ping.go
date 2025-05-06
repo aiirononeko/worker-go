@@ -2,11 +2,19 @@ package query
 
 import (
 	"context"
+	"log"
+	"time"
 )
 
-// PingQueryService は Ping の問い合わせ処理を提供するインターフェースです。
+// PingResult は Ping の結果を保持します。
+type PingResult struct {
+	Message   string    `json:"message"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// PingQueryService は Ping ユースケースのインターフェースです。
 type PingQueryService interface {
-	Ping(ctx context.Context) (string, error)
+	Execute(ctx context.Context) PingResult
 }
 
 // pingQueryServiceImpl は PingQueryService の実装です。
@@ -20,7 +28,13 @@ func NewPingQueryService() PingQueryService {
 	return &pingQueryServiceImpl{}
 }
 
-// Ping は Ping の問い合わせ処理を実行します。
-func (s *pingQueryServiceImpl) Ping(ctx context.Context) (string, error) {
-	return "Pong", nil
+// Execute は Ping のユースケースを実行します。
+func (s *pingQueryServiceImpl) Execute(ctx context.Context) PingResult {
+	log.Printf("INFO: Executing Ping query.")
+	result := PingResult{
+		Message:   "pong",
+		Timestamp: time.Now(),
+	}
+	log.Printf("INFO: Ping query executed successfully. Message: %s, Timestamp: %s", result.Message, result.Timestamp)
+	return result
 }

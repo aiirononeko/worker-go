@@ -97,7 +97,31 @@ paths:
           description: Internal Server Error.
       security: [] # No authentication required for this endpoint
 
-  # --- Existing Workout Endpoints --- #
+  # --- Menu Endpoints --- #
+  /v1/menus:
+    get:
+      summary: List user menus
+      operationId: listMenus
+      tags:
+        - Menus
+      description: Retrieves a list of menus belonging to the authenticated user/device, ordered by sort_order.
+      responses:
+        '200':
+          description: A list of menus.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MenuDTO'
+        '401':
+          description: Unauthorized (Invalid or missing Authorization header).
+        '500':
+          description: Internal Server Error.
+      security:
+        - bearerAuth: [] # Explicitly require bearer auth for this endpoint
+
+  # --- Workout Endpoints --- #
   /workouts/{id}:
     get:
       summary: Get workout details by ID
@@ -123,6 +147,26 @@ paths:
           description: Workout not found
         '401':
           description: Unauthorized
+
+  # --- Utility Endpoints --- #
+  /ping:
+    get:
+      summary: Check API health
+      operationId: ping
+      tags:
+        - Utility
+      description: Returns a simple pong message and timestamp to indicate the API is responsive.
+      responses:
+        '200':
+          description: API is responsive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PingResponse'
+        '500':
+          description: Internal Server Error (although unlikely for ping).
+      security: [] # No authentication required for this endpoint
+
 components:
   schemas:
     # --- Auth Schemas --- #
@@ -154,6 +198,56 @@ components:
           description: The JWT refresh token to be exchanged.
       required:
         - refresh_token
+
+    # --- Utility Schemas --- #
+    PingResponse:
+      type: object
+      description: Response for the ping endpoint.
+      properties:
+        message:
+          type: string
+          example: pong
+        timestamp:
+          type: string
+          format: date-time
+          description: Current server timestamp when the ping was processed.
+      required:
+        - message
+        - timestamp
+
+    # --- Menu Schemas --- #
+    MenuDTO:
+      type: object
+      description: Represents a menu item.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Menu ID.
+        name:
+          type: string
+          description: Name of the menu.
+        description:
+          type: string
+          nullable: true
+          description: Optional description for the menu.
+        sort_order:
+          type: integer
+          description: Order in which the menu should appear.
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the menu was created.
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the menu was last updated.
+      required:
+        - id
+        - name
+        - sort_order
+        - created_at
+        - updated_at
 
     # --- Existing Workout Schemas --- #
     WorkoutDetail:
@@ -225,3 +319,7 @@ tags:
     description: Authentication related operations
   - name: Workouts
     description: Operations related to workouts
+  - name: Utility
+    description: Utility related operations
+  - name: Menus
+    description: Operations related to menus

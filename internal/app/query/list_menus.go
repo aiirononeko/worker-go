@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/aiirononeko/bulktrack-api/internal/app/dto"
@@ -27,38 +28,40 @@ func NewListMenusQueryService(mr menu.MenuRepository) ListMenusQueryService {
 
 // Execute はメニュー一覧取得のユースケースを実行します。
 func (s *listMenusQueryServiceImpl) Execute(ctx context.Context) ([]dto.MenuDTO, error) {
-	// コンテキストから認証情報を取得
+	log.Printf("INFO: Starting to execute ListMenus query.")
+
 	uid, ok := ctx.Value(middleware.UIDKey).(string)
 	if !ok || uid == "" {
-		// UIDが取得できない場合は認証エラーとして扱う (通常は認証ミドルウェアでブロックされるはず)
+		log.Printf("ERROR: UID not found in context during ListMenus execution.")
 		return nil, fmt.Errorf("authentication required: UID not found in context")
 	}
+	log.Printf("INFO: ListMenus query called by UID: %s", uid)
 
-	// UIDから deviceID を抽出 (例: "device:xxxx" -> "xxxx")
-	// ここでは単純なプレフィックス除去。user: も考慮する場合はより詳細なパースが必要。
 	var idToQuery string
 	if strings.HasPrefix(uid, "device:") {
 		idToQuery = strings.TrimPrefix(uid, "device:")
+		log.Printf("INFO: Extracted DeviceID %s from UID %s for ListMenus query.", idToQuery, uid)
 	} else if strings.HasPrefix(uid, "user:") {
-		// 現状 menus テーブルは device_id しか持たないため、user: の場合はエラーとするか、
-		// devices テーブルを引いて関連する device_id を全て取得するなどの処理が必要。
-		// ここでは、user:xxx の場合はまだサポートされていないエラーとする。
-		return nil, fmt.Errorf("listing menus by user_id is not yet supported, use device_id")
+		userIDToQuery := strings.TrimPrefix(uid, "user:")
+		log.Printf("WARN: ListMenus by UserID (%s) is not yet supported. UID was: %s", userIDToQuery, uid)
+		return nil, fmt.Errorf("listing menus by user_id (%s) is not yet supported, use device_id", userIDToQuery)
 	} else {
+		log.Printf("ERROR: Invalid UID format in context during ListMenus: %s", uid)
 		return nil, fmt.Errorf("invalid UID format in context: %s", uid)
 	}
 
 	if idToQuery == "" {
+		log.Printf("ERROR: Failed to extract actual ID from UID %s for ListMenus query.", uid)
 		return nil, fmt.Errorf("failed to extract actual ID from UID: %s", uid)
 	}
 
-	// 1. リポジトリを呼び出してドメインオブジェクトを取得 (メソッド名と引数を変更)
+	log.Printf("INFO: Calling MenuRepository.ListMenusByDeviceId with DeviceID: %s", idToQuery)
 	menus, err := s.menuRepo.ListMenusByDeviceId(ctx, idToQuery)
 	if err != nil {
+		log.Printf("ERROR: Failed to list menus for DeviceID %s from repository: %v", idToQuery, err)
 		return nil, fmt.Errorf("failed to list menus: %w", err)
 	}
 
-	// 2. ドメインオブジェクトを DTO に変換
 	menuDTOs := make([]dto.MenuDTO, 0, len(menus))
 	for _, m := range menus {
 		menuDTOs = append(menuDTOs, dto.MenuDTO{
@@ -71,5 +74,6 @@ func (s *listMenusQueryServiceImpl) Execute(ctx context.Context) ([]dto.MenuDTO,
 		})
 	}
 
+	log.Printf("INFO: Successfully executed ListMenus query for DeviceID: %s. Found %d menus.", idToQuery, len(menuDTOs))
 	return menuDTOs, nil
 }

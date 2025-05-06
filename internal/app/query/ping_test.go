@@ -3,24 +3,30 @@ package query_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aiirononeko/bulktrack-api/internal/app/query"
 )
 
-func TestPingQueryService_Ping(t *testing.T) {
+func TestPingQueryService_Execute(t *testing.T) {
 	// Arrange (準備)
 	service := query.NewPingQueryService()
 	ctx := context.Background()
-	expected := "Pong"
+	expectedMessage := "pong"
 
 	// Act (実行)
-	msg, err := service.Ping(ctx)
+	result := service.Execute(ctx)
 
 	// Assert (検証)
-	if err != nil {
-		t.Fatalf("Ping() returned an unexpected error: %v", err)
+	if result.Message != expectedMessage {
+		t.Errorf("Execute() returned wrong message: got %q, want %q", result.Message, expectedMessage)
 	}
-	if msg != expected {
-		t.Fatalf("Ping() returned wrong message: got %q, want %q", msg, expected)
+
+	// Timestamp should be recent, check if it's within a reasonable range (e.g., last 5 seconds)
+	if time.Since(result.Timestamp) > 5*time.Second {
+		t.Errorf("Execute() returned a timestamp that is too old: got %v", result.Timestamp)
+	}
+	if result.Timestamp.IsZero() {
+		t.Errorf("Execute() returned a zero timestamp")
 	}
 }
