@@ -52,33 +52,46 @@ CREATE INDEX IF NOT EXISTS idx_menu_device_id ON menus(device_id);
 -- 4. ワークアウト（実施記録）
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS workouts (
-    id           TEXT PRIMARY KEY,
-    device_id    TEXT NOT NULL,                    -- パーティションキー
-    menu_id      TEXT NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
-    performed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (device_id) REFERENCES devices(id)
+    id           TEXT PRIMARY KEY,          -- UUID for the workout session
+    device_id    TEXT NOT NULL,             -- Foreign key to devices table
+    menu_id      TEXT NOT NULL,             -- Foreign key to menus table
+    performed_at TEXT NOT NULL,             -- Timestamp when the workout was performed (ISO8601 format recommended)
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), -- Use ISO8601 format
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), -- Use ISO8601 format
+    FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE, -- Delete workouts if device is deleted
+    FOREIGN KEY (menu_id) REFERENCES menus(id) ON DELETE RESTRICT     -- Prevent deleting menus if workouts reference them (or use ON DELETE SET NULL/DEFAULT)
 );
 
-CREATE INDEX IF NOT EXISTS idx_workout_device_id   ON workouts(device_id);
-CREATE INDEX IF NOT EXISTS idx_workout_performed   ON workouts(performed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workouts_device_id ON workouts(device_id);
+CREATE INDEX IF NOT EXISTS idx_workouts_menu_id ON workouts(menu_id); -- If querying by menu is common
 
 -- ----------------------------------------------------------
 -- 5. セット（1 ワークアウト内の複数セット）
 -- ----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS workout_sets (
-    id          TEXT PRIMARY KEY,
-    workout_id  TEXT NOT NULL REFERENCES workouts(id) ON DELETE CASCADE,
-    exercise_id TEXT NOT NULL REFERENCES exercises(id),
-    weight      REAL    NOT NULL CHECK (weight >= 0),
-    reps        INTEGER NOT NULL CHECK (reps   >= 0),
-    rpe         REAL    CHECK (rpe BETWEEN 1 AND 10),
-    rir         INTEGER CHECK (rir BETWEEN 0 AND 5)
+    id            TEXT PRIMARY KEY,          -- UUID for the workout set
+    workout_id    TEXT NOT NULL,             -- Foreign key to workouts table
+    set_order     INTEGER NOT NULL,          -- Order of the set within the workout (1-based)
+    weight        REAL NOT NULL,             -- Weight used (use REAL for floating point)
+    reps          INTEGER NOT NULL,          -- Repetitions performed
+    interval      INTEGER,                   -- Rest interval *after* this set in seconds (nullable).
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE -- Delete sets if workout is deleted
 );
 
-CREATE INDEX IF NOT EXISTS idx_set_workout_id  ON workout_sets(workout_id);
-CREATE INDEX IF NOT EXISTS idx_set_exercise_id ON workout_sets(exercise_id);
+CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_id ON workout_sets(workout_id);
+
+-- Trigger to update workouts.updated_at when workout_sets are modified (Optional but good practice)
+-- Note: Cloudflare D1 might have limitations on complex triggers. Basic update trigger should work.
+CREATE TRIGGER trigger_workout_sets_update_workouts_updated_at
+AFTER UPDATE ON workout_sets
+FOR EACH ROW
+BEGIN
+    UPDATE workouts SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = OLD.workout_id;
+END;
+
+-- Consider a similar trigger for INSERT/DELETE on workout_sets if needed
 
 -- ----------------------------------------------------------
 -- 6. Join テーブル

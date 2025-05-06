@@ -20,6 +20,7 @@ import (
 	appHttpHandler "github.com/aiirononeko/bulktrack-api/internal/interface/http/handler"
 	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
 
+	"github.com/go-playground/validator/v10"
 	"github.com/syumai/workers"
 )
 
@@ -67,10 +68,13 @@ func main() {
 	}
 	slog.Info("Successfully bound to KV namespace", slog.String("binding", refreshTokenKVBindingName))
 
+	validate := validator.New()
+
 	// --- Repositories ---
 	menuRepo := infraD1.NewMenuRepository(dbConn)
 	deviceRepo := infraD1.NewD1DeviceRepository(dbConn)
 	refreshTokenRepo := infraKV.NewKVRefreshTokenRepository(*refreshTokenKV)
+	workoutRepo := infraD1.NewD1WorkoutRepository(dbConn)
 
 	// --- Services & Handlers ---
 	jwtService, err := infraAuth.NewJWTService(cfg.JWTPrivateKeyPEM, cfg.JWTPublicKeyPEM, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
@@ -86,11 +90,13 @@ func main() {
 	listMenusQuery := appQuery.NewListMenusQueryService(menuRepo)
 	createMenuCmdHandler := appCmd.NewCreateMenuHandler(menuRepo)
 	pingService := appQuery.NewPingQueryService()
+	createWorkoutHandler := appCmd.NewCreateWorkoutHandler(workoutRepo)
 
-	// HTTP Handlers - Use context-based logging now
+	// HTTP Handlers
 	menuHttpHandler := appHttpHandler.NewMenuHandler(listMenusQuery, createMenuCmdHandler)
 	pingHttpHandler := appHttpHandler.NewPingHandler(pingService)
 	authHttpHandler := appHttpHandler.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler)
+	workoutHttpHandler := appHttpHandler.NewWorkoutHandler(createWorkoutHandler, validate)
 
 	// --- Middlewares ---
 	loggingMiddlewareFunc := middleware.LoggingMiddleware
@@ -119,6 +125,7 @@ func main() {
 		AuthHandler:           authHttpHandler,
 		PingHandler:           pingHttpHandler,
 		MenuHandler:           menuHttpHandler,
+		WorkoutHandler:        workoutHttpHandler,
 		RequireAuthMiddleware: authMiddlewareFunc,
 	}
 

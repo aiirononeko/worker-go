@@ -59,11 +59,12 @@ type Workout struct {
 }
 
 type WorkoutSet struct {
-	ID         string          `json:"id"`
-	WorkoutID  string          `json:"workout_id"`
-	ExerciseID string          `json:"exercise_id"`
-	Weight     float64         `json:"weight"`
-	Reps       int64           `json:"reps"`
-	Rpe        sql.NullFloat64 `json:"rpe"`
-	Rir        sql.NullInt64   `json:"rir"`
+	ID        string        `json:"id"`
+	WorkoutID string        `json:"workout_id"`
+	SetOrder  int64         `json:"set_order"`
+	Weight    float64       `json:"weight"`
+	Reps      int64         `json:"reps"`
+	Interval  sql.NullInt64 `json:"interval"`
+	CreatedAt string        `json:"created_at"`
+	UpdatedAt string        `json:"updated_at"`
 }

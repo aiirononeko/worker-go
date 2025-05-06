@@ -2,22 +2,24 @@ package workout
 
 import (
 	"context"
+
+	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 )
 
-// Repository defines the persistence operations for Workouts and WorkoutSets
-// within the workout domain context.
-type Repository interface {
-	// SaveWorkout saves the main workout record.
-	// Expects context to potentially contain a repository.DBTX via repository.TxKey.
-	SaveWorkout(ctx context.Context, workout *Workout) error
+// WorkoutRepository defines the interface for workout data persistence.
+//
+//go:generate mockery --name WorkoutRepository --output ./mocks --inpackage
+type WorkoutRepository interface {
+	// CreateWorkout saves the main workout session details.
+	CreateWorkout(ctx context.Context, workout *Workout) error
 
-	// SaveWorkoutSets saves multiple workout sets.
-	// Expects context to potentially contain a repository.DBTX via repository.TxKey.
-	SaveWorkoutSets(ctx context.Context, sets []*WorkoutSet) error
+	// CreateWorkoutSet saves a single workout set associated with a workout.
+	// Consider if a transaction context needs to be explicitly passed or handled.
+	CreateWorkoutSet(ctx context.Context, set *WorkoutSet) error
 
-	// FindWorkoutByID retrieves a workout by its ID.
-	// FindWorkoutByID(ctx context.Context, id WorkoutID) (*Workout, error)
+	// FindWorkoutByID retrieves a workout by its ID, potentially including its sets.
+	FindWorkoutByID(ctx context.Context, id entity.WorkoutID) (*Workout, error)
 
-	// FindWorkoutSetsByWorkoutID retrieves sets for a given workout ID.
-	// FindWorkoutSetsByWorkoutID(ctx context.Context, workoutID WorkoutID) ([]*WorkoutSet, error)
+	// ListWorkoutsByDeviceID retrieves a list of workouts for a device.
+	ListWorkoutsByDeviceID(ctx context.Context, deviceID entity.DeviceID) ([]Workout, error)
 }

@@ -49,9 +49,9 @@ graph TD
 | Layer | Package | Responsibility |
 |-------|---------|----------------|
 | **Domain** | `internal/domain/...` | Entities, VOs, Domain Services (pure Go) |
-| **Application** | `internal/app/{command,query}` | Use‑case orchestration, Tx boundary, DTO ↔ Entity |
-| **Interface / Adapter** | `internal/interface/http` | HTTP Router, DTO marshal, Auth/CORS middleware |
-| **Infrastructure** | `internal/infrastructure/persistence/d1` | D1 repo impl, KV client, JWT utils |
+| **Application** | `internal/app/{command,query}` | Use‑case orchestration, Tx boundary, DTO ↔ Entity, Business Rule Validation |
+| **Interface / Adapter** | `internal/interface/http` | HTTP Routing, Request Decoding, DTO Validation, Response Encoding, Middleware (Auth, CORS, Logging) |
+| **Infrastructure** | `internal/infrastructure/persistence/d1` | D1 Repository Impl, KV Client, JWT Service Impl |
 
 依存方向は **Domain → Application → Interface**。Go import も同方向のみ。
 
@@ -215,3 +215,19 @@ CREATE TABLE IF NOT EXISTS menus (
 | **Use‑Case** | App layer with memory repo DI |
 | **Contract** | Dredd / Prism vs OpenAPI |
 | **Integration** | GitHub Actions: `wrangler d1` local + Worker |
+
+## ✅ Validation Strategy
+
+- **Library**: Utilizes `go-playground/validator/v10` for struct validation.
+- **Interface Layer (HTTP Handlers)**:
+    - Responsible for basic validation of request DTOs (Data Transfer Objects).
+    - Uses struct tags (`validate:",omitempty"`) on DTO fields (e.g., `CreateMenuRequest`) to define rules like `required`, `gte`, `lte`, etc.
+    - After decoding the request body into a DTO struct, `validator.Struct()` is called.
+    - If validation fails, a structured `400 Bad Request` response is returned to the client, typically using the common `SendJSONError` helper and `apperror.ErrBadRequest`.
+- **Application Layer (Commands/Queries)**:
+    - Handles more complex business rule validation that might involve checking state or interacting with repositories (e.g., checking for uniqueness before creation, validating existence of related entities).
+    - Uses custom error types like `command.ErrValidation` or `command.ErrMenuNameConflict` for specific business rule violations.
+    - Also responsible for validating inputs not part of the request body DTO (e.g., DeviceID parsed from context).
+- **Domain Layer (Entities/Value Objects)**:
+    - Enforces invariants through constructors or methods (e.g., `entity.NewDeviceID` validates UUID format).
+    - Ensures that domain objects are always in a valid state.

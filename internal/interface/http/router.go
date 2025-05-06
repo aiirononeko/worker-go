@@ -26,6 +26,7 @@ type RouterDependencies struct {
 	AuthHandler           *handler.AuthHandler    // 認証エンドポイント用
 	PingHandler           *handler.PingHandler    // pingエンドポイント用
 	MenuHandler           *handler.MenuHandler    // /v1/menus 用 (GET, POST)
+	WorkoutHandler        *handler.WorkoutHandler // Added WorkoutHandler
 	RequireAuthMiddleware middleware.Middleware   // 認証ミドルウェアのインスタンス
 }
 
@@ -36,11 +37,21 @@ func NewRouter(deps RouterDependencies) http.Handler {
 	// /v1/menus ルート (認証が必要)
 	if deps.MenuHandler != nil {
 		menuMiddlewares := []middleware.Middleware{deps.RequireAuthMiddleware} // ルート固有ミドルウェア
-		allMiddlewares := make([]middleware.Middleware, 0, len(menuMiddlewares)+len(deps.GlobalMiddlewares))
-		allMiddlewares = append(allMiddlewares, menuMiddlewares...)        // 内側 (Auth)
-		allMiddlewares = append(allMiddlewares, deps.GlobalMiddlewares...) // 外側 (Logging, CORS)
-		finalMenuHandler := middleware.Chain(deps.MenuHandler, allMiddlewares...)
-		mux.Handle("/v1/menus", finalMenuHandler) // パスのみ指定
+		allMenuMiddlewares := make([]middleware.Middleware, 0, len(menuMiddlewares)+len(deps.GlobalMiddlewares))
+		allMenuMiddlewares = append(allMenuMiddlewares, menuMiddlewares...)        // 内側 (Auth)
+		allMenuMiddlewares = append(allMenuMiddlewares, deps.GlobalMiddlewares...) // 外側 (Logging, CORS)
+		finalMenuHandler := middleware.Chain(deps.MenuHandler, allMenuMiddlewares...)
+		mux.Handle("/v1/menus", finalMenuHandler) // Path only, MenuHandler handles methods internally
+	}
+
+	// /v1/workouts ルート (認証が必要)
+	if deps.WorkoutHandler != nil {
+		workoutMiddlewares := []middleware.Middleware{deps.RequireAuthMiddleware} // Route specific middleware
+		allWorkoutMiddlewares := make([]middleware.Middleware, 0, len(workoutMiddlewares)+len(deps.GlobalMiddlewares))
+		allWorkoutMiddlewares = append(allWorkoutMiddlewares, workoutMiddlewares...)     // Inner (Auth)
+		allWorkoutMiddlewares = append(allWorkoutMiddlewares, deps.GlobalMiddlewares...) // Outer (Logging, CORS)
+		finalWorkoutHandler := middleware.Chain(deps.WorkoutHandler, allWorkoutMiddlewares...)
+		mux.Handle("/v1/workouts", finalWorkoutHandler) // Path only, WorkoutHandler handles methods internally (expects POST)
 	}
 
 	// --- その他のカスタムルート (Routes スライスを使う場合) ---
@@ -55,10 +66,17 @@ func NewRouter(deps RouterDependencies) http.Handler {
 	// --- グローバルミドルウェアのみを適用するエンドポイント ---
 
 	if deps.AuthHandler != nil {
-		// /v1/auth/* エンドポイントにはグローバルミドルウェア (CORS, Logging) を適用
-		mux.Handle("POST /v1/auth/device", middleware.Chain(http.HandlerFunc(deps.AuthHandler.ActivateDevice), deps.GlobalMiddlewares...))
-		mux.Handle("POST /v1/auth/refresh", middleware.Chain(http.HandlerFunc(deps.AuthHandler.RefreshToken), deps.GlobalMiddlewares...))
-		mux.Handle("POST /v1/auth/logout", middleware.Chain(http.HandlerFunc(deps.AuthHandler.Logout), deps.GlobalMiddlewares...))
+		// AuthHandler の各メソッドを http.HandlerFunc として登録
+		// ActivateDevice, RefreshToken, Logout が func(w http.ResponseWriter, r *http.Request) のシグネチャを持つ前提
+		// また、AuthHandler.ServeHTTP でメインのルーティングが行われるのではなく、これらのメソッドが直接エンドポイントとなる想定
+		// これは以前のスナップショットの動作に合わせるため。
+		// もし AuthHandler.ServeHTTP が /v1/auth/* を処理するなら、そのように変更する必要がある。
+
+		// Check if the specific handler methods exist and are intended to be routed this way.
+		// This assumes AuthHandler does not have a ServeHTTP that dispatches these itself for /v1/auth/*.
+		mux.Handle("/v1/auth/device", middleware.Chain(http.HandlerFunc(deps.AuthHandler.ActivateDevice), deps.GlobalMiddlewares...))
+		mux.Handle("/v1/auth/refresh", middleware.Chain(http.HandlerFunc(deps.AuthHandler.RefreshToken), deps.GlobalMiddlewares...))
+		mux.Handle("/v1/auth/logout", middleware.Chain(http.HandlerFunc(deps.AuthHandler.Logout), deps.GlobalMiddlewares...))
 	}
 
 	if deps.PingHandler != nil {

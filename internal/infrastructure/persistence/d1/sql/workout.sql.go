@@ -10,9 +10,10 @@ import (
 	"database/sql"
 )
 
-const createWorkout = `-- name: CreateWorkout :exec
+const createWorkout = `-- name: CreateWorkout :one
 INSERT INTO workouts (id, device_id, menu_id, performed_at, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id, device_id, menu_id, performed_at, created_at, updated_at
 `
 
 type CreateWorkoutParams struct {
@@ -24,8 +25,8 @@ type CreateWorkoutParams struct {
 	UpdatedAt   string `json:"updated_at"`
 }
 
-func (q *Queries) CreateWorkout(ctx context.Context, arg CreateWorkoutParams) error {
-	_, err := q.db.ExecContext(ctx, createWorkout,
+func (q *Queries) CreateWorkout(ctx context.Context, arg CreateWorkoutParams) (Workout, error) {
+	row := q.db.QueryRowContext(ctx, createWorkout,
 		arg.ID,
 		arg.DeviceID,
 		arg.MenuID,
@@ -33,33 +34,149 @@ func (q *Queries) CreateWorkout(ctx context.Context, arg CreateWorkoutParams) er
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
-	return err
+	var i Workout
+	err := row.Scan(
+		&i.ID,
+		&i.DeviceID,
+		&i.MenuID,
+		&i.PerformedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
-const createWorkoutSet = `-- name: CreateWorkoutSet :exec
-INSERT INTO workout_sets (id, workout_id, exercise_id, weight, reps, rpe, rir)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+const createWorkoutSet = `-- name: CreateWorkoutSet :one
+INSERT INTO workout_sets (id, workout_id, set_order, weight, reps, interval, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workout_id, set_order, weight, reps, interval, created_at, updated_at
 `
 
 type CreateWorkoutSetParams struct {
-	ID         string          `json:"id"`
-	WorkoutID  string          `json:"workout_id"`
-	ExerciseID string          `json:"exercise_id"`
-	Weight     float64         `json:"weight"`
-	Reps       int64           `json:"reps"`
-	Rpe        sql.NullFloat64 `json:"rpe"`
-	Rir        sql.NullInt64   `json:"rir"`
+	ID        string        `json:"id"`
+	WorkoutID string        `json:"workout_id"`
+	SetOrder  int64         `json:"set_order"`
+	Weight    float64       `json:"weight"`
+	Reps      int64         `json:"reps"`
+	Interval  sql.NullInt64 `json:"interval"`
+	CreatedAt string        `json:"created_at"`
+	UpdatedAt string        `json:"updated_at"`
 }
 
-func (q *Queries) CreateWorkoutSet(ctx context.Context, arg CreateWorkoutSetParams) error {
-	_, err := q.db.ExecContext(ctx, createWorkoutSet,
+func (q *Queries) CreateWorkoutSet(ctx context.Context, arg CreateWorkoutSetParams) (WorkoutSet, error) {
+	row := q.db.QueryRowContext(ctx, createWorkoutSet,
 		arg.ID,
 		arg.WorkoutID,
-		arg.ExerciseID,
+		arg.SetOrder,
 		arg.Weight,
 		arg.Reps,
-		arg.Rpe,
-		arg.Rir,
+		arg.Interval,
+		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
-	return err
+	var i WorkoutSet
+	err := row.Scan(
+		&i.ID,
+		&i.WorkoutID,
+		&i.SetOrder,
+		&i.Weight,
+		&i.Reps,
+		&i.Interval,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getWorkout = `-- name: GetWorkout :one
+SELECT id, device_id, menu_id, performed_at, created_at, updated_at FROM workouts
+WHERE id = ?
+`
+
+func (q *Queries) GetWorkout(ctx context.Context, id string) (Workout, error) {
+	row := q.db.QueryRowContext(ctx, getWorkout, id)
+	var i Workout
+	err := row.Scan(
+		&i.ID,
+		&i.DeviceID,
+		&i.MenuID,
+		&i.PerformedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listWorkoutSetsByWorkoutId = `-- name: ListWorkoutSetsByWorkoutId :many
+SELECT id, workout_id, set_order, weight, reps, interval, created_at, updated_at FROM workout_sets
+WHERE workout_id = ?
+ORDER BY set_order ASC
+`
+
+func (q *Queries) ListWorkoutSetsByWorkoutId(ctx context.Context, workoutID string) ([]WorkoutSet, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkoutSetsByWorkoutId, workoutID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkoutSet
+	for rows.Next() {
+		var i WorkoutSet
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkoutID,
+			&i.SetOrder,
+			&i.Weight,
+			&i.Reps,
+			&i.Interval,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWorkoutsByDeviceId = `-- name: ListWorkoutsByDeviceId :many
+SELECT id, device_id, menu_id, performed_at, created_at, updated_at FROM workouts
+WHERE device_id = ?
+ORDER BY performed_at DESC
+`
+
+func (q *Queries) ListWorkoutsByDeviceId(ctx context.Context, deviceID string) ([]Workout, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkoutsByDeviceId, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Workout
+	for rows.Next() {
+		var i Workout
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeviceID,
+			&i.MenuID,
+			&i.PerformedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
