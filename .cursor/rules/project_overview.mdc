@@ -1,0 +1,60 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Project Overview for BulkTrack API
+
+This document provides a guide to the BulkTrack API backend, a Go application running on Cloudflare Workers with D1 as the database.
+
+## 🗺️ High-Level Architecture
+
+The system follows a client-server model where iOS/Web clients communicate via HTTPS (REST) with a Go Edge Worker (Wasm). The worker handles routing, middleware, command/query (CQRS), and domain logic. It interacts with Cloudflare D1 (serverless SQLite) for data storage.
+
+- API Definition: [api/openapi.yaml](mdc:api/openapi.yaml)
+- Database Schema: [schema.sql](mdc:schema.sql)
+
+## 🏗️ Layered Design
+
+The codebase is organized into the following layers, with dependencies flowing from Domain to Application to Interface:
+
+- **Domain**: `internal/domain/...` (Entities, VOs, Domain Services - pure Go)
+- **Application**: `internal/app/{command,query}` (Use-case orchestration, Tx boundary, DTO ↔ Entity)
+- **Interface / Adapter**: `internal/interface/http` (HTTP Router, DTO marshal, Auth/CORS middleware)
+- **Infrastructure**: `internal/infrastructure/persistence/d1` (D1 repo impl, KV client, JWT utils)
+
+## 🔌 Middleware Architecture
+
+Middleware is used for CORS, logging, and authentication.
+- Global middlewares (CORS, Logging) are applied to most routes.
+    - CORS: [internal/interface/http/middleware/cors.go](mdc:internal/interface/http/middleware/cors.go)
+    - Logging: [internal/interface/http/middleware/logging.go](mdc:internal/interface/http/middleware/logging.go)
+- Route-Specific Middlewares:
+    - RequireAuth: [internal/interface/http/middleware/auth.go](mdc:internal/interface/http/middleware/auth.go) (Verifies JWT and injects `uid`)
+- Chaining: Implemented in [internal/interface/http/middleware/middleware.go](mdc:internal/interface/http/middleware/middleware.go)
+- Router Configuration: Defined in [internal/interface/http/router.go](mdc:internal/interface/http/router.go) and applied in [cmd/worker/main.go](mdc:cmd/worker/main.go).
+
+## 📁 Key Files and Directories
+
+- Entrypoint: [cmd/worker/main.go](mdc:cmd/worker/main.go)
+- API Definition: [api/openapi.yaml](mdc:api/openapi.yaml)
+- Configuration: [config/config.go](mdc:config/config.go)
+- HTTP Router: [internal/interface/http/router.go](mdc:internal/interface/http/router.go)
+- Auth Middleware: [internal/interface/http/middleware/auth.go](mdc:internal/interface/http/middleware/auth.go)
+- Database Schema: [schema.sql](mdc:schema.sql)
+- SQLC Configuration: [internal/infrastructure/persistence/d1/sqlc.yaml](mdc:internal/infrastructure/persistence/d1/sqlc.yaml)
+- Cloudflare Workers Config: [wrangler.jsonc](mdc:wrangler.jsonc)
+
+## 📦 Data Modeling
+
+The primary database schema is defined in [schema.sql](mdc:schema.sql). Default partitioning is by `device_id`.
+
+## 🛠️ Build & Local Development
+
+- SQLC queries are generated based on [internal/infrastructure/persistence/d1/sqlc.yaml](mdc:internal/infrastructure/persistence/d1/sqlc.yaml).
+- Cloudflare Wrangler is used for deployment and local development (`wrangler dev`, `wrangler d1`).
+
+## 🪵 Logging Strategy
+
+- Uses standard Go `log` package.
+- Basic HTTP request/response logging is handled by middleware: [internal/interface/http/middleware/logging.go](mdc:internal/interface/http/middleware/logging.go).
