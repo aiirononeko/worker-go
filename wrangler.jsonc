@@ -18,5 +18,9 @@
       "binding": "REFRESH_TOKENS_KV",
       "id": "60a8548f69b244c094d2f86d5ca6e504"
     }
-  ]
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
 }
