@@ -12,9 +12,10 @@ type CreateWorkoutRequest struct {
 
 // WorkoutSetInput represents the input for a single workout set.
 type WorkoutSetInput struct {
-	Weight   float64 `json:"weight" validate:"required,gte=0"`
-	Reps     int     `json:"reps" validate:"required,gte=0"`
-	Interval *int    `json:"interval" validate:"omitempty,gte=0"` // Optional, in seconds. Renamed from restDuration.
+	ExerciseID string  `json:"exerciseId" validate:"required,uuid4"`
+	Weight     float64 `json:"weight" validate:"required,gte=0"`
+	Reps       int     `json:"reps" validate:"required,gte=0"`
+	Interval   *int    `json:"interval" validate:"omitempty,gte=0"` // Optional, in seconds. Renamed from restDuration.
 }
 
 // WorkoutDTO represents the workout data returned to the client.
@@ -30,9 +31,10 @@ type WorkoutDTO struct {
 
 // WorkoutSetDTO represents a single workout set returned to the client.
 type WorkoutSetDTO struct {
-	ID       string  `json:"id"`
-	SetOrder int     `json:"setOrder"`
-	Weight   float64 `json:"weight"`
-	Reps     int     `json:"reps"`
-	Interval *int    `json:"interval,omitempty"` // Renamed from restDuration.
+	ID         string  `json:"id"`
+	ExerciseID string  `json:"exerciseId"`
+	SetOrder   int     `json:"setOrder"`
+	Weight     float64 `json:"weight"`
+	Reps       int     `json:"reps"`
+	Interval   *int    `json:"interval,omitempty"` // Renamed from restDuration.
 }

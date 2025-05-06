@@ -3,6 +3,7 @@ package d1
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -39,9 +40,9 @@ func (r *D1WorkoutRepository) CreateWorkout(ctx context.Context, wk *workout.Wor
 		ID:          wk.ID.String(),
 		DeviceID:    wk.DeviceID.String(),
 		MenuID:      wk.MenuID.String(),
-		PerformedAt: wk.PerformedAt.Format("2006-01-02T15:04:05Z07:00"),
-		CreatedAt:   wk.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt:   wk.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		PerformedAt: wk.PerformedAt.Format(time.RFC3339),
+		CreatedAt:   wk.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   wk.UpdatedAt.Format(time.RFC3339),
 	})
 	if err != nil {
 		return apperror.NewErrInternal("failed to create workout record in DB (no-tx)", err)
@@ -49,16 +50,18 @@ func (r *D1WorkoutRepository) CreateWorkout(ctx context.Context, wk *workout.Wor
 
 	// Persist each workout set
 	for _, set := range wk.Sets {
-		_, err = r.queries.CreateWorkoutSet(ctx, db.CreateWorkoutSetParams{
-			ID:        set.ID.String(),
-			WorkoutID: wk.ID.String(),
-			SetOrder:  int64(set.SetOrder),
-			Weight:    set.Weight,
-			Reps:      int64(set.Reps),
-			Interval:  sql.NullInt64{Int64: int64OrZero(set.Interval), Valid: set.Interval != nil},
-			CreatedAt: set.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt: set.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		})
+		params := db.CreateWorkoutSetParams{
+			ID:         set.ID.String(),
+			WorkoutID:  wk.ID.String(),
+			ExerciseID: set.ExerciseID.String(),
+			SetOrder:   int64(set.SetOrder),
+			Weight:     set.Weight,
+			Reps:       int64(set.Reps),
+			Interval:   sql.NullInt64{Int64: int64OrZero(set.Interval), Valid: set.Interval != nil},
+			CreatedAt:  set.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:  set.UpdatedAt.Format(time.RFC3339),
+		}
+		_, err = r.queries.CreateWorkoutSet(ctx, params)
 		if err != nil {
 			// If a set fails, the workout record is already created. This is not atomic.
 			// Consider manual cleanup or accept potential inconsistency if atomicity is critical and transactions are unavailable.
@@ -74,16 +77,18 @@ func (r *D1WorkoutRepository) CreateWorkout(ctx context.Context, wk *workout.Wor
 // CreateWorkoutSet saves a single workout set.
 // This method might be used if sets are created independently or added to an existing workout.
 func (r *D1WorkoutRepository) CreateWorkoutSet(ctx context.Context, set *workout.WorkoutSet) error {
-	_, err := r.queries.CreateWorkoutSet(ctx, db.CreateWorkoutSetParams{
-		ID:        set.ID.String(),
-		WorkoutID: set.WorkoutID.String(),
-		SetOrder:  int64(set.SetOrder),
-		Weight:    set.Weight,
-		Reps:      int64(set.Reps),
-		Interval:  sql.NullInt64{Int64: int64OrZero(set.Interval), Valid: set.Interval != nil},
-		CreatedAt: set.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt: set.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-	})
+	params := db.CreateWorkoutSetParams{
+		ID:         set.ID.String(),
+		WorkoutID:  set.WorkoutID.String(),
+		ExerciseID: set.ExerciseID.String(),
+		SetOrder:   int64(set.SetOrder),
+		Weight:     set.Weight,
+		Reps:       int64(set.Reps),
+		Interval:   sql.NullInt64{Int64: int64OrZero(set.Interval), Valid: set.Interval != nil},
+		CreatedAt:  set.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:  set.UpdatedAt.Format(time.RFC3339),
+	}
+	_, err := r.queries.CreateWorkoutSet(ctx, params)
 	if err != nil {
 		return apperror.NewErrInternal("failed to create workout set record", err)
 	}
@@ -94,7 +99,7 @@ func (r *D1WorkoutRepository) CreateWorkoutSet(ctx context.Context, set *workout
 func (r *D1WorkoutRepository) FindWorkoutByID(ctx context.Context, id entity.WorkoutID) (*workout.Workout, error) {
 	dbWorkout, err := r.queries.GetWorkout(ctx, id.String())
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperror.NewErrNotFound("Workout", id.String())
 		}
 		return nil, apperror.NewErrInternal(fmt.Sprintf("failed to get workout by id %s from DB", id.String()), err)
@@ -161,11 +166,17 @@ func (r *D1WorkoutRepository) mapDBWorkoutToDomain(dbWk db.Workout, dbSets []db.
 		return nil, apperror.NewErrInternal(fmt.Sprintf("invalid updated_at from DB '%s'", dbWk.UpdatedAt), err)
 	}
 
+	var notes *string
+	// if dbWk.Notes.Valid { // Uncomment if/when Notes field exists in db.Workout
+	// 	notes = &dbWk.Notes.String
+	// }
+
 	domainWorkout := &workout.Workout{
 		ID:          workoutID,
 		DeviceID:    parsedDeviceID,
 		MenuID:      menuID,
 		PerformedAt: performedAt,
+		Notes:       notes,
 		CreatedAt:   createdAt,
 		UpdatedAt:   updatedAt,
 		Sets:        make([]*workout.WorkoutSet, len(dbSets)),
@@ -175,6 +186,10 @@ func (r *D1WorkoutRepository) mapDBWorkoutToDomain(dbWk db.Workout, dbSets []db.
 		setID, err := entity.NewWorkoutSetIDFromString(dbSet.ID)
 		if err != nil {
 			return nil, apperror.NewErrInternal(fmt.Sprintf("invalid workout set ID from DB '%s'", dbSet.ID), err)
+		}
+		setExerciseID, err := entity.NewExerciseIDFromString(dbSet.ExerciseID)
+		if err != nil {
+			return nil, apperror.NewErrInternal(fmt.Sprintf("invalid exercise_id for set from DB '%s'", dbSet.ExerciseID), err)
 		}
 		setWorkoutID, err := entity.NewWorkoutIDFromString(dbSet.WorkoutID)
 		if err != nil {
@@ -200,14 +215,15 @@ func (r *D1WorkoutRepository) mapDBWorkoutToDomain(dbWk db.Workout, dbSets []db.
 		}
 
 		domainWorkout.Sets[i] = &workout.WorkoutSet{
-			ID:        setID,
-			WorkoutID: domainWorkout.ID,
-			SetOrder:  int(dbSet.SetOrder),
-			Weight:    dbSet.Weight,
-			Reps:      int(dbSet.Reps),
-			Interval:  interval,
-			CreatedAt: setCreatedAt,
-			UpdatedAt: setUpdatedAt,
+			ID:         setID,
+			ExerciseID: setExerciseID,
+			WorkoutID:  domainWorkout.ID,
+			SetOrder:   int(dbSet.SetOrder),
+			Weight:     dbSet.Weight,
+			Reps:       int(dbSet.Reps),
+			Interval:   interval,
+			CreatedAt:  setCreatedAt,
+			UpdatedAt:  setUpdatedAt,
 		}
 	}
 	return domainWorkout, nil
@@ -223,5 +239,9 @@ func int64OrZero(val *int) int64 {
 
 // Helper function to parse time strings from DB (assuming ISO8601 like format)
 func parseTime(timeStr string) (time.Time, error) {
-	return time.Parse("2006-01-02T15:04:05Z", timeStr)
+	t, err := time.Parse(time.RFC3339, timeStr)
+	if err == nil {
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("failed to parse time string '%s': %w", timeStr, err)
 }

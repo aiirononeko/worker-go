@@ -52,26 +52,32 @@ type Muscle struct {
 type VwExerciseVolume struct {
 	SetID        string          `json:"set_id"`
 	WorkoutID    string          `json:"workout_id"`
-	PerformedAt  string          `json:"performed_at"`
-	DeviceID     string          `json:"device_id"`
+	ExerciseID   string          `json:"exercise_id"`
 	SetOrder     int64           `json:"set_order"`
-	Volume       sql.NullFloat64 `json:"volume"`
 	Weight       float64         `json:"weight"`
 	Reps         int64           `json:"reps"`
-	ExerciseID   string          `json:"exercise_id"`
+	Volume       sql.NullFloat64 `json:"volume"`
+	Interval     sql.NullInt64   `json:"interval"`
+	SetCreatedAt string          `json:"set_created_at"`
+	SetUpdatedAt string          `json:"set_updated_at"`
+	PerformedAt  string          `json:"performed_at"`
+	DeviceID     string          `json:"device_id"`
 	ExerciseName string          `json:"exercise_name"`
 }
 
 type VwMuscleVolume struct {
 	SetID        string          `json:"set_id"`
 	WorkoutID    string          `json:"workout_id"`
-	PerformedAt  string          `json:"performed_at"`
-	DeviceID     string          `json:"device_id"`
+	ExerciseID   string          `json:"exercise_id"`
 	SetOrder     int64           `json:"set_order"`
-	Volume       sql.NullFloat64 `json:"volume"`
 	Weight       float64         `json:"weight"`
 	Reps         int64           `json:"reps"`
-	ExerciseID   string          `json:"exercise_id"`
+	Volume       sql.NullFloat64 `json:"volume"`
+	Interval     sql.NullInt64   `json:"interval"`
+	SetCreatedAt string          `json:"set_created_at"`
+	SetUpdatedAt string          `json:"set_updated_at"`
+	PerformedAt  string          `json:"performed_at"`
+	DeviceID     string          `json:"device_id"`
 	ExerciseName string          `json:"exercise_name"`
 	MuscleID     string          `json:"muscle_id"`
 	MuscleName   string          `json:"muscle_name"`
@@ -80,6 +86,7 @@ type VwMuscleVolume struct {
 type VwWorkoutSetDetail struct {
 	SetID        string          `json:"set_id"`
 	WorkoutID    string          `json:"workout_id"`
+	ExerciseID   string          `json:"exercise_id"`
 	SetOrder     int64           `json:"set_order"`
 	Weight       float64         `json:"weight"`
 	Reps         int64           `json:"reps"`
@@ -101,13 +108,14 @@ type Workout struct {
 }
 
 type WorkoutSet struct {
-	ID        string          `json:"id"`
-	WorkoutID string          `json:"workout_id"`
-	SetOrder  int64           `json:"set_order"`
-	Weight    float64         `json:"weight"`
-	Reps      int64           `json:"reps"`
-	Volume    sql.NullFloat64 `json:"volume"`
-	Interval  sql.NullInt64   `json:"interval"`
-	CreatedAt string          `json:"created_at"`
-	UpdatedAt string          `json:"updated_at"`
+	ID         string          `json:"id"`
+	WorkoutID  string          `json:"workout_id"`
+	ExerciseID string          `json:"exercise_id"`
+	SetOrder   int64           `json:"set_order"`
+	Weight     float64         `json:"weight"`
+	Reps       int64           `json:"reps"`
+	Volume     sql.NullFloat64 `json:"volume"`
+	Interval   sql.NullInt64   `json:"interval"`
+	CreatedAt  string          `json:"created_at"`
+	UpdatedAt  string          `json:"updated_at"`
 }

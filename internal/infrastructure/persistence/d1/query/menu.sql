@@ -28,3 +28,8 @@ INSERT INTO menus (
     ?, ?, ?, ?, ?, ?, ?
 )
 RETURNING *;
+
+-- name: GetMenu :one
+SELECT id, device_id, name, description, sort_order, created_at, updated_at
+FROM menus
+WHERE id = ?;

@@ -92,13 +92,14 @@ func main() {
 	refreshTokenHandler := appCmd.NewRefreshTokenHandler(jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
 	logoutHandler := appCmd.NewLogoutHandler(jwtService, refreshTokenRepo)
 	listMenusQuery := appQuery.NewListMenusQueryService(menuRepo)
-	createMenuCmdHandler := appCmd.NewCreateMenuHandler(menuRepo)
+	createMenuHandler := appCmd.NewCreateMenuHandler(menuRepo)
+	updateMenuExercisesHandler := appCmd.NewUpdateMenuExercisesHandler(menuRepo)
 	pingService := appQuery.NewPingQueryService()
 	createWorkoutHandler := appCmd.NewCreateWorkoutHandler(workoutRepo)
 	dashboardQueryService := appQuery.NewDashboardQueryService(querier)
 
 	// HTTP Handlers
-	menuHttpHandler := appHttpHandler.NewMenuHandler(listMenusQuery, createMenuCmdHandler)
+	menuHttpHandler := appHttpHandler.NewMenuHandler(listMenusQuery, createMenuHandler, updateMenuExercisesHandler)
 	pingHttpHandler := appHttpHandler.NewPingHandler(pingService)
 	authHttpHandler := appHttpHandler.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler)
 	workoutHttpHandler := appHttpHandler.NewWorkoutHandler(createWorkoutHandler, validate)

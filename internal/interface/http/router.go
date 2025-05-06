@@ -42,7 +42,10 @@ func NewRouter(deps RouterDependencies) http.Handler {
 		allMenuMiddlewares = append(allMenuMiddlewares, menuMiddlewares...)        // 内側 (Auth)
 		allMenuMiddlewares = append(allMenuMiddlewares, deps.GlobalMiddlewares...) // 外側 (Logging, CORS)
 		finalMenuHandler := middleware.Chain(deps.MenuHandler, allMenuMiddlewares...)
-		mux.Handle("/v1/menus", finalMenuHandler) // Path only, MenuHandler handles methods internally
+		// Register for /v1/menus.
+		// If you also need to handle /v1/menus/*, you might need a separate registration
+		// or ensure your MenuHandler can correctly dispatch based on the full path.
+		mux.Handle("/v1/menus", finalMenuHandler)
 	}
 
 	// /v1/workouts ルート (認証が必要)

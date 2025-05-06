@@ -20,14 +20,15 @@ type Workout struct {
 
 // WorkoutSet represents a single set within a workout session.
 type WorkoutSet struct {
-	ID        entity.WorkoutSetID
-	WorkoutID entity.WorkoutID // Back-reference to the aggregate root
-	SetOrder  int              // 1-based order of the set
-	Weight    float64
-	Reps      int
-	Interval  *int // Rest interval *after* this set in seconds (nullable). Renamed from RestDuration.
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID         entity.WorkoutSetID
+	ExerciseID entity.ExerciseID
+	WorkoutID  entity.WorkoutID // Back-reference to the aggregate root
+	SetOrder   int              // 1-based order of the set
+	Weight     float64
+	Reps       int
+	Interval   *int // Rest interval *after* this set in seconds (nullable). Renamed from RestDuration.
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 // AddSet adds a workout set to the workout aggregate.
@@ -58,15 +59,16 @@ func NewWorkout(deviceID entity.DeviceID, menuID entity.MenuID, performedAt time
 
 // NewWorkoutSet creates a new workout set instance.
 // WorkoutID and SetOrder are typically set when added to a Workout aggregate.
-func NewWorkoutSet(weight float64, reps int, interval *int) *WorkoutSet {
+func NewWorkoutSet(exerciseID entity.ExerciseID, weight float64, reps int, interval *int) *WorkoutSet {
 	now := time.Now().UTC()
 	return &WorkoutSet{
-		ID:        entity.NewWorkoutSetID(),
-		Weight:    weight,
-		Reps:      reps,
-		Interval:  interval,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:         entity.NewWorkoutSetID(),
+		ExerciseID: exerciseID,
+		Weight:     weight,
+		Reps:       reps,
+		Interval:   interval,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 		// WorkoutID and SetOrder are set later by AddSet
 	}
 }

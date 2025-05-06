@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	"github.com/aiirononeko/bulktrack-api/internal/app/dto"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/workout"
@@ -61,22 +62,22 @@ func (h *CreateWorkoutHandler) Handle(ctx context.Context, cmd CreateWorkoutComm
 	// Placeholder implementation
 	parsedPerformedAt, err := time.Parse(time.RFC3339Nano, cmd.PerformedAt)
 	if err != nil {
-		// This validation should ideally be done by the validator on the DTO's string format
-		// or a more specific apperror should be returned.
-		// For now, using a generic error.
-		return nil, err // Should be an apperror.ErrBadRequest
+		return nil, apperror.NewErrBadRequest("Invalid performedAt format", err.Error())
 	}
 
 	parsedMenuID, err := entity.NewMenuIDFromString(cmd.MenuID)
 	if err != nil {
-		return nil, err // Should be an apperror.ErrBadRequest
+		return nil, apperror.NewErrBadRequest("Invalid menu ID format", err.Error())
 	}
 
 	workoutEntity := workout.NewWorkout(cmd.DeviceID, parsedMenuID, parsedPerformedAt, cmd.Notes)
 
 	for _, setInput := range cmd.Sets {
-		// Use setInput.Interval when creating the domain entity
-		setEntity := workout.NewWorkoutSet(setInput.Weight, setInput.Reps, setInput.Interval)
+		exerciseID, err := entity.NewExerciseIDFromString(setInput.ExerciseID)
+		if err != nil {
+			return nil, apperror.NewErrBadRequest("Invalid exercise ID format in set", err.Error())
+		}
+		setEntity := workout.NewWorkoutSet(exerciseID, setInput.Weight, setInput.Reps, setInput.Interval)
 		workoutEntity.AddSet(setEntity)
 	}
 
@@ -98,11 +99,12 @@ func (h *CreateWorkoutHandler) Handle(ctx context.Context, cmd CreateWorkoutComm
 
 	for i, s := range workoutEntity.Sets {
 		workoutDTO.Sets[i] = dto.WorkoutSetDTO{
-			ID:       s.ID.String(),
-			SetOrder: s.SetOrder,
-			Weight:   s.Weight,
-			Reps:     s.Reps,
-			Interval: s.Interval, // Use Interval for mapping back to DTO
+			ID:         s.ID.String(),
+			ExerciseID: s.ExerciseID.String(),
+			SetOrder:   s.SetOrder,
+			Weight:     s.Weight,
+			Reps:       s.Reps,
+			Interval:   s.Interval,
 		}
 	}
 

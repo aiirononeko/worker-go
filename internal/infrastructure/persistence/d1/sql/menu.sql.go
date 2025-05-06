@@ -58,6 +58,27 @@ func (q *Queries) CreateMenu(ctx context.Context, arg CreateMenuParams) (Menu, e
 	return i, err
 }
 
+const getMenu = `-- name: GetMenu :one
+SELECT id, device_id, name, description, sort_order, created_at, updated_at
+FROM menus
+WHERE id = ?
+`
+
+func (q *Queries) GetMenu(ctx context.Context, id string) (Menu, error) {
+	row := q.db.QueryRowContext(ctx, getMenu, id)
+	var i Menu
+	err := row.Scan(
+		&i.ID,
+		&i.DeviceID,
+		&i.Name,
+		&i.Description,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listMenusByDeviceId = `-- name: ListMenusByDeviceId :many
 SELECT
     id,

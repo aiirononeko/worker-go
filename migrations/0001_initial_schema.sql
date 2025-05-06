@@ -71,6 +71,7 @@ CREATE INDEX IF NOT EXISTS idx_workouts_menu_id ON workouts(menu_id); -- If quer
 CREATE TABLE IF NOT EXISTS workout_sets (
     id            TEXT PRIMARY KEY,          -- UUID for the workout set
     workout_id    TEXT NOT NULL,             -- Foreign key to workouts table
+    exercise_id   TEXT NOT NULL,             -- Foreign key to exercises table
     set_order     INTEGER NOT NULL,          -- Order of the set within the workout (1-based)
     weight        REAL NOT NULL,             -- Weight used (use REAL for floating point)
     reps          INTEGER NOT NULL,          -- Repetitions performed
@@ -78,10 +79,12 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     interval      INTEGER,                   -- Rest interval *after* this set in seconds (nullable).
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE -- Delete sets if workout is deleted
+    FOREIGN KEY (workout_id) REFERENCES workouts(id) ON DELETE CASCADE, -- Delete sets if workout is deleted
+    FOREIGN KEY (exercise_id) REFERENCES exercises(id) ON DELETE RESTRICT -- Prevent deleting exercises referenced by sets
 );
 
 CREATE INDEX IF NOT EXISTS idx_workout_sets_workout_id ON workout_sets(workout_id);
+CREATE INDEX IF NOT EXISTS idx_workout_sets_exercise_id ON workout_sets(exercise_id);
 
 -- Trigger to update workouts.updated_at when workout_sets are modified (Optional but good practice)
 -- Note: Cloudflare D1 might have limitations on complex triggers. Basic update trigger should work.
@@ -120,58 +123,47 @@ CREATE INDEX IF NOT EXISTS idx_exercise_muscle_muscle_id   ON exercise_muscles(m
 -- 7. Views for Dashboard Aggregation
 -- ----------------------------------------------------------
 
--- View 1: Add workout context (timestamp, device_id) to workout sets
-CREATE VIEW IF NOT EXISTS vw_workout_set_details AS
+-- View 1: Add workout context (timestamp, device_id, exercise_id) to workout sets
+DROP VIEW IF EXISTS vw_workout_set_details;
+CREATE VIEW vw_workout_set_details AS
 SELECT
     ws.id AS set_id,
     ws.workout_id,
+    ws.exercise_id,
     ws.set_order,
     ws.weight,
     ws.reps,
-    ws.volume,      -- The generated volume column
+    ws.volume,
     ws.interval,
     ws.created_at AS set_created_at,
     ws.updated_at AS set_updated_at,
     w.performed_at,
-    w.device_id     -- Keep device_id for potential filtering/aggregation
+    w.device_id
 FROM
     workout_sets ws
 JOIN
     workouts w ON ws.workout_id = w.id;
 
--- View 2: Join set details with exercises via menus
-CREATE VIEW IF NOT EXISTS vw_exercise_volumes AS
+-- View 2: Join simplified set details with exercises to get names
+DROP VIEW IF EXISTS vw_exercise_volumes;
+CREATE VIEW vw_exercise_volumes AS
 SELECT
-    vwsd.set_id,
-    vwsd.workout_id,
-    vwsd.performed_at,
-    vwsd.device_id,
-    vwsd.set_order,
-    vwsd.volume,
-    vwsd.weight,
-    vwsd.reps,
-    ex.id AS exercise_id,
-    ex.name AS exercise_name
-    -- Add other columns from exercises or menus if needed for dashboard display
+    vwsd.*, -- Select all from vw_workout_set_details (includes exercise_id, volume, weight, reps etc.)
+    ex.name AS exercise_name -- Join only exercises table to get the name
 FROM
     vw_workout_set_details vwsd
 JOIN
-    workouts w ON vwsd.workout_id = w.id
-JOIN
-    menus m ON w.menu_id = m.id
-JOIN
-    menu_exercises me ON m.id = me.menu_id
-JOIN
-    exercises ex ON me.exercise_id = ex.id;
+    exercises ex ON vwsd.exercise_id = ex.id; -- Direct JOIN
 
--- View 3: Join exercise volumes with muscle groups
-CREATE VIEW IF NOT EXISTS vw_muscle_volumes AS
+-- View 3: Join new exercise volumes with muscle groups
+DROP VIEW IF EXISTS vw_muscle_volumes;
+CREATE VIEW vw_muscle_volumes AS
 SELECT
-    vev.*, -- Select all columns from vw_exercise_volumes
+    vev.*, -- Select all columns from the new vw_exercise_volumes
     mu.id AS muscle_id,
     mu.name AS muscle_name
 FROM
-    vw_exercise_volumes vev
+    vw_exercise_volumes vev -- Use the new vw_exercise_volumes
 JOIN
     exercise_muscles em ON vev.exercise_id = em.exercise_id
 JOIN

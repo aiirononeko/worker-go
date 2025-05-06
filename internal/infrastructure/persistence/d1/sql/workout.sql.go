@@ -47,26 +47,39 @@ func (q *Queries) CreateWorkout(ctx context.Context, arg CreateWorkoutParams) (W
 }
 
 const createWorkoutSet = `-- name: CreateWorkoutSet :one
-INSERT INTO workout_sets (id, workout_id, set_order, weight, reps, interval, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workout_id, set_order, weight, reps, volume, interval, created_at, updated_at
+INSERT INTO workout_sets (
+    id,
+    workout_id,
+    exercise_id,
+    set_order,
+    weight,
+    reps,
+    interval,
+    created_at,
+    updated_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
+RETURNING id, workout_id, exercise_id, set_order, weight, reps, volume, interval, created_at, updated_at
 `
 
 type CreateWorkoutSetParams struct {
-	ID        string        `json:"id"`
-	WorkoutID string        `json:"workout_id"`
-	SetOrder  int64         `json:"set_order"`
-	Weight    float64       `json:"weight"`
-	Reps      int64         `json:"reps"`
-	Interval  sql.NullInt64 `json:"interval"`
-	CreatedAt string        `json:"created_at"`
-	UpdatedAt string        `json:"updated_at"`
+	ID         string        `json:"id"`
+	WorkoutID  string        `json:"workout_id"`
+	ExerciseID string        `json:"exercise_id"`
+	SetOrder   int64         `json:"set_order"`
+	Weight     float64       `json:"weight"`
+	Reps       int64         `json:"reps"`
+	Interval   sql.NullInt64 `json:"interval"`
+	CreatedAt  string        `json:"created_at"`
+	UpdatedAt  string        `json:"updated_at"`
 }
 
 func (q *Queries) CreateWorkoutSet(ctx context.Context, arg CreateWorkoutSetParams) (WorkoutSet, error) {
 	row := q.db.QueryRowContext(ctx, createWorkoutSet,
 		arg.ID,
 		arg.WorkoutID,
+		arg.ExerciseID,
 		arg.SetOrder,
 		arg.Weight,
 		arg.Reps,
@@ -78,6 +91,7 @@ func (q *Queries) CreateWorkoutSet(ctx context.Context, arg CreateWorkoutSetPara
 	err := row.Scan(
 		&i.ID,
 		&i.WorkoutID,
+		&i.ExerciseID,
 		&i.SetOrder,
 		&i.Weight,
 		&i.Reps,
@@ -109,7 +123,7 @@ func (q *Queries) GetWorkout(ctx context.Context, id string) (Workout, error) {
 }
 
 const listWorkoutSetsByWorkoutId = `-- name: ListWorkoutSetsByWorkoutId :many
-SELECT id, workout_id, set_order, weight, reps, volume, interval, created_at, updated_at FROM workout_sets
+SELECT id, workout_id, exercise_id, set_order, weight, reps, volume, interval, created_at, updated_at FROM workout_sets
 WHERE workout_id = ?
 ORDER BY set_order ASC
 `
@@ -126,6 +140,7 @@ func (q *Queries) ListWorkoutSetsByWorkoutId(ctx context.Context, workoutID stri
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkoutID,
+			&i.ExerciseID,
 			&i.SetOrder,
 			&i.Weight,
 			&i.Reps,

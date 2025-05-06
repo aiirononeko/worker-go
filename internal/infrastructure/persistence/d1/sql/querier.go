@@ -11,11 +11,14 @@ import (
 
 type Querier interface {
 	CreateMenu(ctx context.Context, arg CreateMenuParams) (Menu, error)
+	CreateMenuExercise(ctx context.Context, arg CreateMenuExerciseParams) error
 	CreateWorkout(ctx context.Context, arg CreateWorkoutParams) (Workout, error)
 	CreateWorkoutSet(ctx context.Context, arg CreateWorkoutSetParams) (WorkoutSet, error)
+	DeleteMenuExercisesByMenuID(ctx context.Context, menuID string) error
 	GetDevice(ctx context.Context, id string) (Device, error)
 	// Get total volume per exercise for a given device within a date range.
 	GetExerciseVolumeSummary(ctx context.Context, arg GetExerciseVolumeSummaryParams) ([]GetExerciseVolumeSummaryRow, error)
+	GetMenu(ctx context.Context, id string) (Menu, error)
 	// Get total volume per muscle group for a given device within a date range.
 	GetMuscleVolumeSummary(ctx context.Context, arg GetMuscleVolumeSummaryParams) ([]GetMuscleVolumeSummaryRow, error)
 	// Calculate the overall average weekly volume for a device over a specified period.
@@ -25,6 +28,7 @@ type Querier interface {
 	// Weeks start on Monday ('%Y-%W'). Use '%Y-%w' for Sunday start (0=Sunday).
 	GetWeeklyVolumeSummary(ctx context.Context, arg GetWeeklyVolumeSummaryParams) ([]GetWeeklyVolumeSummaryRow, error)
 	GetWorkout(ctx context.Context, id string) (Workout, error)
+	ListMenuExercisesByMenuID(ctx context.Context, menuID string) ([]ListMenuExercisesByMenuIDRow, error)
 	ListMenusByDeviceId(ctx context.Context, deviceID string) ([]Menu, error)
 	ListWorkoutSetsByWorkoutId(ctx context.Context, workoutID string) ([]WorkoutSet, error)
 	ListWorkoutsByDeviceId(ctx context.Context, deviceID string) ([]Workout, error)

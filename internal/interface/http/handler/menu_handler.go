@@ -12,6 +12,7 @@ import (
 
 	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	"github.com/aiirononeko/bulktrack-api/internal/app/command"
+	"github.com/aiirononeko/bulktrack-api/internal/app/dto"
 	"github.com/aiirononeko/bulktrack-api/internal/app/query"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
@@ -48,13 +49,19 @@ type MenuDTO struct {
 type MenuHandler struct {
 	listMenusQuery       query.ListMenusQueryService
 	createMenuCmdHandler *command.CreateMenuHandler
+	updateMenuExHandler  *command.UpdateMenuExercisesHandler
 }
 
 // NewMenuHandler は MenuHandler の新しいインスタンスを生成します。
-func NewMenuHandler(lms query.ListMenusQueryService, cmdHandler *command.CreateMenuHandler) *MenuHandler {
+func NewMenuHandler(
+	lms query.ListMenusQueryService,
+	createCmdHandler *command.CreateMenuHandler,
+	updateExCmdHandler *command.UpdateMenuExercisesHandler,
+) *MenuHandler {
 	return &MenuHandler{
 		listMenusQuery:       lms,
-		createMenuCmdHandler: cmdHandler,
+		createMenuCmdHandler: createCmdHandler,
+		updateMenuExHandler:  updateExCmdHandler,
 	}
 }
 
@@ -62,21 +69,48 @@ func NewMenuHandler(lms query.ListMenusQueryService, cmdHandler *command.CreateM
 func (h *MenuHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := middleware.LoggerFromContext(ctx)
-
 	r = r.WithContext(context.WithValue(ctx, middleware.LoggerKey, logger))
 
-	logger.DebugContext(ctx, "MenuHandler ServeHTTP called", slog.String("method", r.Method), slog.String("path", r.URL.Path))
-	switch r.Method {
-	case http.MethodGet:
-		logger.DebugContext(ctx, "Routing to list handler")
-		h.list(w, r)
-	case http.MethodPost:
-		logger.DebugContext(ctx, "Routing to create handler")
-		h.create(w, r)
-	default:
-		logger.WarnContext(ctx, "Method not allowed for menu handler", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+	basePath := "/v1/menus"
+	fullPath := r.URL.Path
+
+	logger.DebugContext(ctx, "MenuHandler ServeHTTP called", "method", r.Method, "path", fullPath)
+
+	if strings.HasPrefix(fullPath, basePath+"/") && strings.HasSuffix(fullPath, "/exercises") {
+		trimmedPath := strings.TrimPrefix(fullPath, basePath+"/")
+		menuIDStr := strings.TrimSuffix(trimmedPath, "/exercises")
+
+		if menuIDStr == "" || strings.Contains(menuIDStr, "/") {
+			logger.WarnContext(ctx, "Invalid path format for menu exercises", "path", fullPath)
+			SendJSONError(w, logger, "Not Found", http.StatusNotFound, "Invalid path")
+			return
+		}
+
+		if r.Method == http.MethodPut {
+			h.updateMenuExercises(w, r, menuIDStr)
+			return
+		}
+		logger.WarnContext(ctx, "Method not allowed for menu exercises path", "method", r.Method, "path", fullPath)
 		SendJSONError(w, logger, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed, "")
+		return
 	}
+
+	if fullPath == basePath {
+		switch r.Method {
+		case http.MethodGet:
+			h.list(w, r)
+			return
+		case http.MethodPost:
+			h.create(w, r)
+			return
+		}
+		logger.WarnContext(ctx, "Method not allowed for /v1/menus", "method", r.Method)
+		SendJSONError(w, logger, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed, "")
+		return
+	}
+
+	logger.WarnContext(ctx, "Path not found in MenuHandler", "path", fullPath)
+	SendJSONError(w, logger, "Not Found", http.StatusNotFound, "The requested menu operation is not supported.")
 }
 
 // list は GET /v1/menus リクエストを処理します。
@@ -238,4 +272,81 @@ func (h *MenuHandler) create(w http.ResponseWriter, r *http.Request) {
 		logger.ErrorContext(ctx, "Failed to encode create menu response", slog.Any("error", err))
 	}
 	logger.InfoContext(ctx, "Successfully processed create menu request", slog.String("menu_id", respDTO.ID))
+}
+
+// UpdateMenuExercises handles PUT /v1/menus/{menuId}/exercises
+func (h *MenuHandler) updateMenuExercises(w http.ResponseWriter, r *http.Request, menuIDStr string) {
+	ctx := r.Context()
+	logger := middleware.LoggerFromContext(ctx).With(slog.String("menu_id_path", menuIDStr))
+	logger.InfoContext(ctx, "Processing update menu exercises request")
+
+	uidWithPrefix, ok := middleware.GetDeviceIDFromContext(ctx)
+	if !ok {
+		logger.WarnContext(ctx, "Authorization error: UID not found in context for update menu exercises")
+		SendJSONError(w, logger, "Unauthorized", http.StatusUnauthorized, "Device ID not found in context")
+		return
+	}
+	deviceIDStr := strings.TrimPrefix(uidWithPrefix, "device:")
+	logger = logger.With(slog.String("device_id_token", deviceIDStr))
+
+	var reqDTO dto.UpdateMenuExercisesRequestDTO
+	if err := json.NewDecoder(r.Body).Decode(&reqDTO); err != nil {
+		logger.WarnContext(ctx, "Failed to decode request body for update menu exercises", slog.Any("error", err))
+		SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, "Invalid request body: "+err.Error())
+		return
+	}
+	defer r.Body.Close()
+
+	if err := validate.StructCtx(ctx, reqDTO); err != nil {
+		var validationErrors validator.ValidationErrors
+		var errorMsgs []string
+		if errors.As(err, &validationErrors) {
+			for _, fe := range validationErrors {
+				errorMsgs = append(errorMsgs, fmt.Sprintf("Field '%s' failed on '%s' tag", fe.Field(), fe.Tag()))
+			}
+		} else {
+			errorMsgs = append(errorMsgs, err.Error())
+		}
+		details := strings.Join(errorMsgs, "; ")
+		logger.WarnContext(ctx, "Input validation failed for update menu exercises", slog.String("validation_errors", details))
+		SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, "Validation failed: "+details)
+		return
+	}
+
+	cmd := command.UpdateMenuExercisesCommand{
+		MenuID:    menuIDStr,
+		DeviceID:  deviceIDStr,
+		Exercises: reqDTO.Exercises,
+	}
+
+	result, cmdErr := h.updateMenuExHandler.Handle(ctx, cmd)
+	if cmdErr != nil {
+		logger.WarnContext(ctx, "UpdateMenuExercises command failed", slog.Any("error", cmdErr))
+
+		var nfErr *apperror.ErrNotFound
+		var badReqErr *apperror.ErrBadRequest
+		var forbiddenErr *apperror.ErrForbidden
+		var internalErr *apperror.ErrInternal
+
+		switch {
+		case errors.As(cmdErr, &nfErr):
+			SendJSONError(w, logger, "Not Found", http.StatusNotFound, nfErr.Error())
+		case errors.As(cmdErr, &badReqErr):
+			SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, badReqErr.Error())
+		case errors.As(cmdErr, &forbiddenErr):
+			SendJSONError(w, logger, "Forbidden", http.StatusForbidden, forbiddenErr.Error())
+		case errors.As(cmdErr, &internalErr):
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, internalErr.Error())
+		default:
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, "Failed to update menu exercises: "+cmdErr.Error())
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(result.Menu); err != nil {
+		logger.ErrorContext(ctx, "Failed to encode update menu exercises response", slog.Any("error", err))
+	}
+	logger.InfoContext(ctx, "Successfully processed update menu exercises request", slog.String("menu_id", result.Menu.ID))
 }

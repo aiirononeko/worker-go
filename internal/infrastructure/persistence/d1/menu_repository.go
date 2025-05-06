@@ -2,6 +2,8 @@ package d1
 
 import (
 	"context" // For sql.NullString & sql.OpenDB
+	"errors"
+
 	// Need this for sql.DBTX if not aliased
 	// For errors.Is and potentially future use
 	"fmt"
@@ -105,14 +107,17 @@ func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID entit
 			return nil, apperror.NewErrInternal(fmt.Sprintf("Failed to parse timestamp for menu %s from DB", row.ID), err)
 		}
 
+		// When listing menus, we don't typically fetch all their exercises unless specified.
+		// The Exercises field will be empty here. It can be populated by a call to ListMenuExercises if needed.
 		menusResult = append(menusResult, menu.Menu{
-			ID:          menuID, // Use parsed entity.MenuID
+			ID:          menuID,
 			DeviceID:    rowDeviceID,
 			Name:        row.Name,
 			Description: description,
 			SortOrder:   int(row.SortOrder),
 			CreatedAt:   createdAt,
 			UpdatedAt:   updatedAt,
+			Exercises:   nil, // Explicitly nil for list view
 		})
 	}
 	slog.InfoContext(ctx, "Successfully listed menus by device ID via sqlc",
@@ -164,4 +169,113 @@ func (r *menuRepository) Create(ctx context.Context, m *menu.Menu) error {
 		slog.String("deviceID", m.DeviceID.String()),
 	)
 	return nil
+}
+
+func (r *menuRepository) FindMenuByID(ctx context.Context, id entity.MenuID, deviceID entity.DeviceID) (*menu.Menu, error) {
+	q := db.New(r.db)
+	row, err := q.GetMenu(ctx, id.String())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, apperror.NewErrNotFound("Menu", id.String())
+		}
+		slog.ErrorContext(ctx, "Failed to execute sqlc GetMenu query", slog.String("menuID", id.String()), slog.Any("error", err))
+		return nil, apperror.NewErrInternal(fmt.Sprintf("Failed to get menu %s from DB", id.String()), err)
+	}
+
+	if row.DeviceID != deviceID.String() {
+		slog.WarnContext(ctx, "Menu found but does not belong to the requesting device", slog.String("menuID", id.String()), slog.String("menuDeviceID", row.DeviceID), slog.String("requestDeviceID", deviceID.String()))
+		return nil, apperror.NewErrForbidden(fmt.Sprintf("Access to menu %s denied", id.String()))
+	}
+
+	menuID, err := entity.NewMenuIDFromString(row.ID)
+	if err != nil { /* handle error */
+		return nil, apperror.NewErrInternal("parsing menu id", err)
+	}
+	rowDeviceID, err := entity.NewDeviceID(row.DeviceID)
+	if err != nil { /* handle error */
+		return nil, apperror.NewErrInternal("parsing device id", err)
+	}
+	var description *string
+	if row.Description.Valid {
+		descStr := row.Description.String
+		description = &descStr
+	}
+	createdAt, err := time.Parse(sqliteTimeFormat, row.CreatedAt)
+	if err != nil { /* handle error */
+		return nil, apperror.NewErrInternal("parsing created_at", err)
+	}
+	updatedAt, err := time.Parse(sqliteTimeFormat, row.UpdatedAt)
+	if err != nil { /* handle error */
+		return nil, apperror.NewErrInternal("parsing updated_at", err)
+	}
+
+	// Exercises are not populated here by default. Call ListMenuExercises separately if needed.
+	return &menu.Menu{
+		ID:          menuID,
+		DeviceID:    rowDeviceID,
+		Name:        row.Name,
+		Description: description,
+		SortOrder:   int(row.SortOrder),
+		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
+		Exercises:   nil, // Populate with ListMenuExercises if returning MenuWithExercises directly
+	}, nil
+}
+
+func (r *menuRepository) UpdateMenuExercises(ctx context.Context, menuID entity.MenuID, deviceID entity.DeviceID, exercises []menu.MenuExerciseItem) error {
+	q := db.New(r.db)
+
+	_, err := r.FindMenuByID(ctx, menuID, deviceID)
+	if err != nil {
+		return err
+	}
+
+	err = q.DeleteMenuExercisesByMenuID(ctx, menuID.String())
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to delete existing exercises for menu", slog.String("menuID", menuID.String()), slog.Any("error", err))
+		return apperror.NewErrInternal(fmt.Sprintf("failed to delete existing exercises for menu %s", menuID.String()), err)
+	}
+
+	for _, meItem := range exercises {
+		params := db.CreateMenuExerciseParams{
+			MenuID:     menuID.String(),
+			ExerciseID: meItem.ExerciseID.String(),
+			Position:   int64(meItem.Position),
+		}
+		err := q.CreateMenuExercise(ctx, params)
+		if err != nil {
+			slog.ErrorContext(ctx, "Failed to create menu_exercise link", slog.String("menuID", menuID.String()), slog.String("exerciseID", meItem.ExerciseID.String()), slog.Any("error", err))
+			return apperror.NewErrInternal(fmt.Sprintf("failed to create menu_exercise link for menu %s, exercise %s", menuID.String(), meItem.ExerciseID.String()), err)
+		}
+	}
+	slog.InfoContext(ctx, "Successfully updated exercises for menu", slog.String("menuID", menuID.String()), slog.Int("num_exercises", len(exercises)))
+	return nil
+}
+
+func (r *menuRepository) ListMenuExercises(ctx context.Context, menuID entity.MenuID) ([]menu.MenuExerciseItem, error) {
+	q := db.New(r.db)
+	dbMenuExerciseRows, err := q.ListMenuExercisesByMenuID(ctx, menuID.String())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return []menu.MenuExerciseItem{}, nil
+		}
+		slog.ErrorContext(ctx, "Failed to list exercises for menu from DB", slog.String("menuID", menuID.String()), slog.Any("error", err))
+		return nil, apperror.NewErrInternal(fmt.Sprintf("failed to list exercises for menu %s from DB", menuID.String()), err)
+	}
+
+	domainItems := make([]menu.MenuExerciseItem, len(dbMenuExerciseRows))
+	for i, dbRow := range dbMenuExerciseRows {
+		exID, err := entity.NewExerciseIDFromString(dbRow.ExerciseID) // Assumes NewExerciseIDFromString exists
+		if err != nil {
+			slog.ErrorContext(ctx, "Invalid exercise ID from DB for menu_exercise", slog.String("dbExerciseID", dbRow.ExerciseID), slog.String("menuID", menuID.String()), slog.Any("error", err))
+			return nil, apperror.NewErrInternal(fmt.Sprintf("invalid exercise ID '%s' from DB for menu %s", dbRow.ExerciseID, menuID.String()), err)
+		}
+		domainItems[i] = menu.MenuExerciseItem{
+			ExerciseID:   exID,
+			ExerciseName: dbRow.ExerciseName,
+			Position:     int(dbRow.Position),
+		}
+	}
+	slog.InfoContext(ctx, "Successfully listed exercises for menu", slog.String("menuID", menuID.String()), slog.Int("num_exercises", len(domainItems)))
+	return domainItems, nil
 }

@@ -4,8 +4,19 @@ VALUES (?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: CreateWorkoutSet :one
-INSERT INTO workout_sets (id, workout_id, set_order, weight, reps, interval, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO workout_sets (
+    id,
+    workout_id,
+    exercise_id,
+    set_order,
+    weight,
+    reps,
+    interval,
+    created_at,
+    updated_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
 RETURNING *;
 
 -- name: ListWorkoutsByDeviceId :many

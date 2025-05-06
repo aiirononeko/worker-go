@@ -119,7 +119,7 @@ paths:
         '500':
           description: Internal Server Error.
       security:
-        - bearerAuth: [] # Explicitly require bearer auth for this endpoint
+        - BearerAuth: [] # Explicitly require bearer auth for this endpoint
 
     post:
       summary: Create a new menu
@@ -147,7 +147,47 @@ paths:
         '500':
           description: Internal Server Error.
       security:
-        - bearerAuth: [] # Explicitly require bearer auth for this endpoint
+        - BearerAuth: [] # Explicitly require bearer auth for this endpoint
+
+  /v1/menus/{menuId}/exercises:
+    put:
+      tags:
+        - Menus
+      summary: Update exercises for a specific menu
+      description: Replaces all exercises associated with a menu. Send an empty array in the exercises field to remove all exercises.
+      operationId: updateMenuExercises
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: menuId
+          in: path
+          required: true
+          description: ID of the menu to update exercises for
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        description: List of exercises to associate with the menu.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMenuExercisesRequest'
+      responses:
+        '200':
+          description: Exercises updated successfully and the updated menu is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuWithExercises'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   # --- Workout Endpoints --- #
   /v1/workouts:
@@ -214,17 +254,101 @@ paths:
       operationId: ping
       tags:
         - Utility
-      description: Returns a simple pong message and timestamp to indicate the API is responsive.
       responses:
         '200':
-          description: API is responsive.
+          description: API is healthy
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PingResponse'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: pong
+      security: [] # No authentication required
+
+  # --- Dashboard Endpoints --- #
+  /v1/dashboard/summary:
+    get:
+      summary: Get dashboard summary
+      operationId: getDashboardSummary
+      tags:
+        - Dashboard
+      description: >
+        Retrieves a summary for the dashboard within the specified date range,
+        including weekly volume and average weekly volume.
+      parameters:
+        - name: startDate
+          in: query
+          required: true
+          description: Start date for the summary period (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: true
+          description: End date for the summary period (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Dashboard summary retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardSummaryDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '500':
-          description: Internal Server Error (although unlikely for ping).
-      security: [] # No authentication required for this endpoint
+          $ref: '#/components/responses/InternalServerError'
+      security:
+        - BearerAuth: []
+
+  /v1/dashboard/exercises:
+    get:
+      summary: Get exercise volume summary
+      operationId: getExerciseVolumeSummary
+      tags:
+        - Dashboard
+      description: >
+        Retrieves a summary of exercise volumes within the specified date range,
+        including total volume, sets, reps, and max weight per exercise.
+      parameters:
+        - name: startDate
+          in: query
+          required: true
+          description: Start date for the summary period (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: true
+          description: End date for the summary period (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Exercise volume summary retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExerciseVolumeSummaryDTO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+        - BearerAuth: []
 
 components:
   schemas:
@@ -325,6 +449,59 @@ components:
       required:
         - name
         - sort_order
+
+    UpdateMenuExerciseItem:
+      type: object
+      properties:
+        exercise_id:
+          type: string
+          format: uuid
+          description: ID of the exercise.
+        position:
+          type: integer
+          format: int32
+          description: Sort order of the exercise within this menu (0-indexed).
+      required:
+        - exercise_id
+        - position
+
+    UpdateMenuExercisesRequest:
+      type: object
+      properties:
+        exercises:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpdateMenuExerciseItem'
+          description: An array of exercises with their positions. To remove all exercises, send an empty array.
+      required:
+        - exercises
+
+    MenuExerciseItemResponse:
+      type: object
+      properties:
+        exercise_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          description: Name of the exercise.
+        position:
+          type: integer
+          format: int32
+      required:
+        - exercise_id
+        - name
+        - position
+
+    MenuWithExercises:
+      allOf:
+        - $ref: '#/components/schemas/MenuDTO'
+      properties:
+        exercises:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuExerciseItemResponse'
+          description: List of exercises in this menu, ordered by position.
 
     # --- New Workout Schemas for POST /v1/workouts --- #
     CreateWorkoutRequest:
@@ -564,13 +741,158 @@ components:
         - name
         - sets
         - reps
+
+    # --- Dashboard Schemas --- #
+    WeeklyVolumeDTO:
+      type: object
+      properties:
+        yearWeek:
+          type: string
+          description: The year and week number in 'YYYY-WW' format.
+          example: "2024-19"
+        totalVolume:
+          type: number
+          format: double
+          description: Total training volume for that week.
+          example: 12500.5
+      required:
+        - yearWeek
+        - totalVolume
+
+    DashboardSummaryDTO:
+      type: object
+      properties:
+        weeklySummary:
+          type: array
+          items:
+            $ref: '#/components/schemas/WeeklyVolumeDTO'
+          description: Summary of total volume for each week in the requested period.
+        averageWeeklyVolume:
+          type: number
+          format: double
+          nullable: true
+          description: Average weekly training volume over the requested period.
+          example: 12875.25
+      required:
+        - weeklySummary
+        # averageWeeklyVolume can be null if no data
+
+    ExerciseVolumeSummaryDTO:
+      type: object
+      properties:
+        exerciseId:
+          type: string
+          format: uuid
+          description: Unique identifier of the exercise.
+        exerciseName:
+          type: string
+          description: Name of the exercise.
+          example: "Bench Press"
+        totalVolume:
+          type: number
+          format: double
+          description: Total volume for this exercise in the period.
+          example: 5500.0
+        totalSets:
+          type: integer
+          description: Total number of sets performed for this exercise.
+          example: 20
+        totalReps:
+          type: integer
+          description: Total number of repetitions performed for this exercise.
+          example: 200
+        maxWeight:
+          type: number
+          format: double
+          description: Maximum weight lifted for this exercise in the period.
+          example: 100.5
+      required:
+        - exerciseId
+        - exerciseName
+        - totalVolume
+        - totalSets
+        - totalReps
+        - maxWeight
+
   securitySchemes:
-    bearerAuth:
+    BearerAuth: # Matches the security requirement name in paths
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >
+        JWT Authorization header using the Bearer scheme.
+        Enter 'Bearer' [space] and then your token in the text input below.
+        Example: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+  responses:
+    BadRequest:
+      description: Bad Request (e.g., validation error, malformed request body).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Bad Request"
+              details:
+                type: string
+                example: "Validation failed: Field 'name' is required."
+    Unauthorized:
+      description: Unauthorized (e.g., missing, invalid, or expired authentication token).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Unauthorized"
+              details:
+                type: string
+                example: "Invalid or expired token."
+    Forbidden:
+      description: Forbidden (e.g., user does not have permission to access the resource).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Forbidden"
+              details:
+                type: string
+                example: "You do not have permission to perform this action."
+    NotFound:
+      description: Not Found (e.g., the requested resource does not exist).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Not Found"
+              details:
+                type: string
+                example: "The requested resource was not found."
+    InternalServerError:
+      description: Internal Server Error (e.g., an unexpected error occurred on the server).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Internal Server Error"
+              details:
+                type: string
+                example: "An unexpected error occurred."
+
 security:
-  - bearerAuth: [] # Default security for endpoints not explicitly marked otherwise
+  - BearerAuth: [] # Default security for endpoints not explicitly marked otherwise
 tags:
   - name: Auth
     description: Authentication related operations
@@ -580,3 +902,5 @@ tags:
     description: Utility related operations
   - name: Menus
     description: Operations related to menus
+  - name: Dashboard
+    description: Operations related to the dashboard
