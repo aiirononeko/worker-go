@@ -5,6 +5,7 @@ package main
 import (
 	"database/sql"
 	"log"
+	"net/http"
 
 	_ "github.com/syumai/workers/cloudflare/d1"
 	"github.com/syumai/workers/cloudflare/kv"
@@ -17,6 +18,7 @@ import (
 	infraKV "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/kv"
 	appRouter "github.com/aiirononeko/bulktrack-api/internal/interface/http"
 	appHttp "github.com/aiirononeko/bulktrack-api/internal/interface/http/handler"
+	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
 
 	"github.com/syumai/workers"
 )
@@ -85,6 +87,16 @@ func main() {
 	}
 	router := appRouter.NewRouter(routerDeps)
 
-	log.Println("Starting server...")
-	workers.Serve(router) // mux の代わりに router を渡す
+	// グローバルミドルウェアを適用
+	var handler http.Handler = router // 型を明示
+
+	// 認証ミドルウェアのインスタンスを作成
+	authMiddleware := middleware.RequireAuth(jwtService)
+
+	handler = authMiddleware(handler)               // 最初に認証を適用 (ルーターの直前)
+	handler = middleware.LoggingMiddleware(handler) // 次にロギング
+	handler = middleware.CORS(handler)              // 最後にCORS (最も外側)
+
+	log.Println("Starting server with CORS, Logging, and Auth middleware...")
+	workers.Serve(handler) // ミドルウェアでラップされたハンドラを渡す
 }

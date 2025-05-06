@@ -7,12 +7,12 @@ package sql
 
 import (
 	"context"
-	"database/sql"
 )
 
-const listMenusByUserId = `-- name: ListMenusByUserId :many
+const listMenusByDeviceId = `-- name: ListMenusByDeviceId :many
 SELECT
     id,
+    device_id,
     name,
     description,
     sort_order,
@@ -21,32 +21,24 @@ SELECT
 FROM
     menus
 WHERE
-    user_id = ?
+    device_id = ?
 ORDER BY
     sort_order ASC,
     created_at DESC
 `
 
-type ListMenusByUserIdRow struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	Description sql.NullString `json:"description"`
-	SortOrder   int64          `json:"sort_order"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   string         `json:"updated_at"`
-}
-
-func (q *Queries) ListMenusByUserId(ctx context.Context, userID string) ([]ListMenusByUserIdRow, error) {
-	rows, err := q.db.QueryContext(ctx, listMenusByUserId, userID)
+func (q *Queries) ListMenusByDeviceId(ctx context.Context, deviceID string) ([]Menu, error) {
+	rows, err := q.db.QueryContext(ctx, listMenusByDeviceId, deviceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListMenusByUserIdRow
+	var items []Menu
 	for rows.Next() {
-		var i ListMenusByUserIdRow
+		var i Menu
 		if err := rows.Scan(
 			&i.ID,
+			&i.DeviceID,
 			&i.Name,
 			&i.Description,
 			&i.SortOrder,

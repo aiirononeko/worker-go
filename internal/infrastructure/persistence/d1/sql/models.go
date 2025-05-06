@@ -8,10 +8,17 @@ import (
 	"database/sql"
 )
 
+type Device struct {
+	ID         string         `json:"id"`
+	UserID     sql.NullString `json:"user_id"`
+	CreatedAt  string         `json:"created_at"`
+	LastSeenAt string         `json:"last_seen_at"`
+}
+
 type Exercise struct {
 	ID        string      `json:"id"`
 	Name      string      `json:"name"`
-	UserID    interface{} `json:"user_id"`
+	DeviceID  interface{} `json:"device_id"`
 	CreatedAt string      `json:"created_at"`
 	UpdatedAt string      `json:"updated_at"`
 }
@@ -23,7 +30,7 @@ type ExerciseMuscle struct {
 
 type Menu struct {
 	ID          string         `json:"id"`
-	UserID      string         `json:"user_id"`
+	DeviceID    string         `json:"device_id"`
 	Name        string         `json:"name"`
 	Description sql.NullString `json:"description"`
 	SortOrder   int64          `json:"sort_order"`
@@ -43,14 +50,14 @@ type Muscle struct {
 }
 
 type Workout struct {
-	ID          string      `json:"id"`
-	UserID      string      `json:"user_id"`
-	MenuID      string      `json:"menu_id"`
-	PerformedAt string      `json:"performed_at"`
-	Rpe         interface{} `json:"rpe"`
-	Rir         interface{} `json:"rir"`
-	CreatedAt   string      `json:"created_at"`
-	UpdatedAt   string      `json:"updated_at"`
+	ID          string          `json:"id"`
+	DeviceID    string          `json:"device_id"`
+	MenuID      string          `json:"menu_id"`
+	PerformedAt string          `json:"performed_at"`
+	Rpe         sql.NullFloat64 `json:"rpe"`
+	Rir         sql.NullInt64   `json:"rir"`
+	CreatedAt   string          `json:"created_at"`
+	UpdatedAt   string          `json:"updated_at"`
 }
 
 type WorkoutSet struct {

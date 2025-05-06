@@ -10,7 +10,7 @@ import (
 // Menu はドメインエンティティを表します。
 type Menu struct {
 	ID          uuid.UUID
-	UserID      string // ドメイン層では userID が誰かは関知しない
+	DeviceID    string
 	Name        string
 	Description *string // ポインタ or sql.NullString に合わせた型が良いかも
 	SortOrder   int
@@ -20,6 +20,6 @@ type Menu struct {
 
 // MenuRepository はメニューデータの永続化を抽象化するインターフェースです。
 type MenuRepository interface {
-	// ListMenusByUserId は指定されたユーザーIDのメニュー一覧をソート順で取得します。
-	ListMenusByUserId(ctx context.Context, userID string) ([]Menu, error)
+	// ListMenusByDeviceId は指定されたデバイスIDのメニュー一覧をソート順で取得します。
+	ListMenusByDeviceId(ctx context.Context, deviceID string) ([]Menu, error)
 }

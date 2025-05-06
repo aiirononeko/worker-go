@@ -1,6 +1,7 @@
--- name: ListMenusByUserId :many
+-- name: ListMenusByDeviceId :many
 SELECT
     id,
+    device_id,
     name,
     description,
     sort_order,
@@ -9,7 +10,7 @@ SELECT
 FROM
     menus
 WHERE
-    user_id = ?
+    device_id = ?
 ORDER BY
     sort_order ASC,
     created_at DESC;
