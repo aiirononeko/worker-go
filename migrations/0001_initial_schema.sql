@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS workout_sets (
     set_order     INTEGER NOT NULL,          -- Order of the set within the workout (1-based)
     weight        REAL NOT NULL,             -- Weight used (use REAL for floating point)
     reps          INTEGER NOT NULL,          -- Repetitions performed
+    volume        REAL GENERATED ALWAYS AS (weight * reps) STORED, -- Volume generated column (STORED recommended)
     interval      INTEGER,                   -- Rest interval *after* this set in seconds (nullable).
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

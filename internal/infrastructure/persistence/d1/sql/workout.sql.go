@@ -49,7 +49,7 @@ func (q *Queries) CreateWorkout(ctx context.Context, arg CreateWorkoutParams) (W
 const createWorkoutSet = `-- name: CreateWorkoutSet :one
 INSERT INTO workout_sets (id, workout_id, set_order, weight, reps, interval, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workout_id, set_order, weight, reps, interval, created_at, updated_at
+RETURNING id, workout_id, set_order, weight, reps, volume, interval, created_at, updated_at
 `
 
 type CreateWorkoutSetParams struct {
@@ -81,6 +81,7 @@ func (q *Queries) CreateWorkoutSet(ctx context.Context, arg CreateWorkoutSetPara
 		&i.SetOrder,
 		&i.Weight,
 		&i.Reps,
+		&i.Volume,
 		&i.Interval,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -108,7 +109,7 @@ func (q *Queries) GetWorkout(ctx context.Context, id string) (Workout, error) {
 }
 
 const listWorkoutSetsByWorkoutId = `-- name: ListWorkoutSetsByWorkoutId :many
-SELECT id, workout_id, set_order, weight, reps, interval, created_at, updated_at FROM workout_sets
+SELECT id, workout_id, set_order, weight, reps, volume, interval, created_at, updated_at FROM workout_sets
 WHERE workout_id = ?
 ORDER BY set_order ASC
 `
@@ -128,6 +129,7 @@ func (q *Queries) ListWorkoutSetsByWorkoutId(ctx context.Context, workoutID stri
 			&i.SetOrder,
 			&i.Weight,
 			&i.Reps,
+			&i.Volume,
 			&i.Interval,
 			&i.CreatedAt,
 			&i.UpdatedAt,

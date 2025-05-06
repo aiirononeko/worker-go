@@ -20,6 +20,7 @@ import (
 	appHttpHandler "github.com/aiirononeko/bulktrack-api/internal/interface/http/handler"
 	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
 
+	db "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/d1/sql" // sqlc generated code
 	"github.com/go-playground/validator/v10"
 	"github.com/syumai/workers"
 )
@@ -76,6 +77,9 @@ func main() {
 	refreshTokenRepo := infraKV.NewKVRefreshTokenRepository(*refreshTokenKV)
 	workoutRepo := infraD1.NewD1WorkoutRepository(dbConn)
 
+	// SQLC Querier (implements query methods)
+	querier := db.New(dbConn)
+
 	// --- Services & Handlers ---
 	jwtService, err := infraAuth.NewJWTService(cfg.JWTPrivateKeyPEM, cfg.JWTPublicKeyPEM, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	if err != nil {
@@ -91,12 +95,14 @@ func main() {
 	createMenuCmdHandler := appCmd.NewCreateMenuHandler(menuRepo)
 	pingService := appQuery.NewPingQueryService()
 	createWorkoutHandler := appCmd.NewCreateWorkoutHandler(workoutRepo)
+	dashboardQueryService := appQuery.NewDashboardQueryService(querier)
 
 	// HTTP Handlers
 	menuHttpHandler := appHttpHandler.NewMenuHandler(listMenusQuery, createMenuCmdHandler)
 	pingHttpHandler := appHttpHandler.NewPingHandler(pingService)
 	authHttpHandler := appHttpHandler.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler)
 	workoutHttpHandler := appHttpHandler.NewWorkoutHandler(createWorkoutHandler, validate)
+	dashboardHttpHandler := appHttpHandler.NewDashboardHandler(dashboardQueryService)
 
 	// --- Middlewares ---
 	loggingMiddlewareFunc := middleware.LoggingMiddleware
@@ -126,6 +132,7 @@ func main() {
 		PingHandler:           pingHttpHandler,
 		MenuHandler:           menuHttpHandler,
 		WorkoutHandler:        workoutHttpHandler,
+		DashboardHandler:      dashboardHttpHandler,
 		RequireAuthMiddleware: authMiddlewareFunc,
 	}
 

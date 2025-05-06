@@ -22,12 +22,13 @@ type Route struct {
 // NewRouter に渡すために使います。
 type RouterDependencies struct {
 	Routes                []Route
-	GlobalMiddlewares     []middleware.Middleware // 全てのルートに適用されるミドルウェア (CORS, Logging)
-	AuthHandler           *handler.AuthHandler    // 認証エンドポイント用
-	PingHandler           *handler.PingHandler    // pingエンドポイント用
-	MenuHandler           *handler.MenuHandler    // /v1/menus 用 (GET, POST)
-	WorkoutHandler        *handler.WorkoutHandler // Added WorkoutHandler
-	RequireAuthMiddleware middleware.Middleware   // 認証ミドルウェアのインスタンス
+	GlobalMiddlewares     []middleware.Middleware   // 全てのルートに適用されるミドルウェア (CORS, Logging)
+	AuthHandler           *handler.AuthHandler      // 認証エンドポイント用
+	PingHandler           *handler.PingHandler      // pingエンドポイント用
+	MenuHandler           *handler.MenuHandler      // /v1/menus 用 (GET, POST)
+	WorkoutHandler        *handler.WorkoutHandler   // Added WorkoutHandler
+	DashboardHandler      *handler.DashboardHandler // Added DashboardHandler
+	RequireAuthMiddleware middleware.Middleware     // 認証ミドルウェアのインスタンス
 }
 
 // NewRouter はルート定義とグローバルミドルウェアを受け取り、HTTPルーターを初期化します。
@@ -52,6 +53,17 @@ func NewRouter(deps RouterDependencies) http.Handler {
 		allWorkoutMiddlewares = append(allWorkoutMiddlewares, deps.GlobalMiddlewares...) // Outer (Logging, CORS)
 		finalWorkoutHandler := middleware.Chain(deps.WorkoutHandler, allWorkoutMiddlewares...)
 		mux.Handle("/v1/workouts", finalWorkoutHandler) // Path only, WorkoutHandler handles methods internally (expects POST)
+	}
+
+	// /v1/dashboard ルート (認証が必要)
+	if deps.DashboardHandler != nil {
+		dashboardMiddlewares := []middleware.Middleware{deps.RequireAuthMiddleware}
+		allDashboardMiddlewares := make([]middleware.Middleware, 0, len(dashboardMiddlewares)+len(deps.GlobalMiddlewares))
+		allDashboardMiddlewares = append(allDashboardMiddlewares, dashboardMiddlewares...)
+		allDashboardMiddlewares = append(allDashboardMiddlewares, deps.GlobalMiddlewares...)
+		finalDashboardHandler := middleware.Chain(deps.DashboardHandler, allDashboardMiddlewares...)
+		// DashboardHandler は /v1/dashboard/* のようなプレフィックスで登録し、内部でサブパスを処理
+		mux.Handle("/v1/dashboard/", finalDashboardHandler)
 	}
 
 	// --- その他のカスタムルート (Routes スライスを使う場合) ---
