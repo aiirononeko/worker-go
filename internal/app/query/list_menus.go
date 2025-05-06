@@ -2,9 +2,10 @@ package query
 
 import (
 	"context"
-	"fmt"
-	"log"
+	"errors"
+	"log/slog"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	"github.com/aiirononeko/bulktrack-api/internal/app/dto"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/menu"
@@ -30,25 +31,41 @@ func NewListMenusQueryService(mr menu.MenuRepository) ListMenusQueryService {
 // Execute はメニュー一覧取得のユースケースを実行します。
 // deviceID はプレフィックスなしの純粋なUUID文字列である必要があります。
 func (s *listMenusQueryServiceImpl) Execute(ctx context.Context, deviceID entity.DeviceID) ([]dto.MenuDTO, error) {
-	log.Printf("INFO: Starting to execute ListMenus query for DeviceID: %s", deviceID.String())
+	slog.InfoContext(ctx, "Starting ListMenus query execution", slog.String("deviceID", deviceID.String()))
 
 	if deviceID.IsZero() {
-		log.Printf("ERROR: DeviceID is empty in ListMenus query execution.")
-		return nil, fmt.Errorf("invalid argument: deviceID cannot be empty")
+		slog.WarnContext(ctx, "DeviceID is empty in ListMenus query execution")
+		return nil, apperror.NewErrBadRequest("DeviceID cannot be empty for ListMenus query", "")
 	}
 
-	log.Printf("INFO: Calling MenuRepository.ListMenusByDeviceId with DeviceID: %s", deviceID.String())
-
+	slog.InfoContext(ctx, "Calling MenuRepository.ListMenusByDeviceId", slog.String("deviceID", deviceID.String()))
 	menus, err := s.menuRepo.ListMenusByDeviceId(ctx, deviceID)
 	if err != nil {
-		log.Printf("ERROR: Failed to list menus for DeviceID %s from repository: %v", deviceID.String(), err)
-		return nil, fmt.Errorf("failed to list menus for deviceID %s: %w", deviceID.String(), err)
+		var nfErr *apperror.ErrNotFound
+		var internalErr *apperror.ErrInternal
+
+		if errors.As(err, &nfErr) {
+			slog.InfoContext(ctx, "No menus found for deviceID via repository", slog.String("deviceID", deviceID.String()), slog.Any("error", err))
+			return nil, nfErr
+		} else if errors.As(err, &internalErr) {
+			slog.ErrorContext(ctx, "Internal error from menu repository while listing menus",
+				slog.String("deviceID", deviceID.String()),
+				slog.Any("error", err),
+			)
+			return nil, internalErr
+		} else {
+			slog.ErrorContext(ctx, "Unexpected error from menu repository while listing menus",
+				slog.String("deviceID", deviceID.String()),
+				slog.Any("original_error", err.Error()),
+			)
+			return nil, apperror.NewErrInternal("Failed to list menus due to an unexpected repository error", err)
+		}
 	}
 
 	menuDTOs := make([]dto.MenuDTO, 0, len(menus))
 	for _, m := range menus {
 		menuDTOs = append(menuDTOs, dto.MenuDTO{
-			ID:          m.ID, // Assuming m.ID is already uuid.UUID
+			ID:          m.ID.String(),
 			Name:        m.Name,
 			Description: m.Description,
 			SortOrder:   m.SortOrder,
@@ -57,6 +74,9 @@ func (s *listMenusQueryServiceImpl) Execute(ctx context.Context, deviceID entity
 		})
 	}
 
-	log.Printf("INFO: Successfully executed ListMenus query for DeviceID: %s. Found %d menus.", deviceID.String(), len(menuDTOs))
+	slog.InfoContext(ctx, "Successfully executed ListMenus query",
+		slog.String("deviceID", deviceID.String()),
+		slog.Int("menu_count", len(menuDTOs)),
+	)
 	return menuDTOs, nil
 }

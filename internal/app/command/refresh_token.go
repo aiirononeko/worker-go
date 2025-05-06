@@ -3,9 +3,10 @@ package command
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
 	// TODO: Refresh Token Repository (KV) の Domain IF を import
 )
@@ -45,51 +46,50 @@ func NewRefreshTokenHandler(jwtService domainAuth.JWTService, refreshTokenRepo d
 }
 
 func (h *refreshTokenHandler) Handle(ctx context.Context, cmd RefreshTokenCommand) (*RefreshTokenResult, error) {
-	log.Printf("INFO: Starting token refresh process.") // リフレッシュトークン自体はログに出さない
+	slog.InfoContext(ctx, "Starting token refresh process.")
 
 	if cmd.RefreshToken == "" {
-		log.Printf("ERROR: Refresh token is empty in RefreshTokenCommand")
-		return nil, fmt.Errorf("refresh token is required")
+		slog.WarnContext(ctx, "Refresh token is empty in RefreshTokenCommand")
+		return nil, apperror.NewErrBadRequest("Refresh token is required", "")
 	}
 
-	log.Printf("INFO: Verifying provided refresh token.")
+	slog.InfoContext(ctx, "Verifying provided refresh token.")
 	claims, err := h.jwtService.VerifyToken(ctx, cmd.RefreshToken)
 	if err != nil {
-		log.Printf("ERROR: Failed to verify refresh token: %v", err)
-		return nil, fmt.Errorf("invalid refresh token: %w", err)
+		slog.WarnContext(ctx, "Failed to verify refresh token", slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrUnauthorized(fmt.Sprintf("Invalid refresh token: %s", err.Error()))
 	}
 	if claims.JTI == "" {
-		log.Printf("ERROR: Invalid refresh token: missing JTI claim. UID from token: %s", claims.UID)
-		return nil, fmt.Errorf("invalid refresh token: missing jti claim")
+		slog.WarnContext(ctx, "Invalid refresh token: missing JTI claim", slog.String("uid_from_token", claims.UID))
+		return nil, apperror.NewErrUnauthorized("Invalid refresh token: missing JTI claim")
 	}
-	log.Printf("INFO: Refresh token verified. JTI: %s, UID: %s", claims.JTI, claims.UID)
+	slog.InfoContext(ctx, "Refresh token verified", slog.String("jti", claims.JTI), slog.String("uid", claims.UID))
 
-	log.Printf("INFO: Validating refresh token (JTI: %s) in KV store for UID: %s", claims.JTI, claims.UID)
+	slog.InfoContext(ctx, "Validating refresh token in KV store", slog.String("jti", claims.JTI), slog.String("uid", claims.UID))
 	if err := h.refreshTokenRepo.Validate(ctx, claims.JTI, claims.UID); err != nil {
-		log.Printf("ERROR: Refresh token validation failed in KV store for JTI %s, UID %s: %v", claims.JTI, claims.UID, err)
-		return nil, fmt.Errorf("refresh token validation failed: %w", err)
+		slog.WarnContext(ctx, "Refresh token validation failed in KV store", slog.String("jti", claims.JTI), slog.String("uid", claims.UID), slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrUnauthorized(fmt.Sprintf("Refresh token validation failed: %s", err.Error()))
 	}
 
-	log.Printf("INFO: Deleting old refresh token (JTI: %s) from KV store.", claims.JTI)
+	slog.InfoContext(ctx, "Deleting old refresh token from KV store.", slog.String("jti", claims.JTI))
 	if err := h.refreshTokenRepo.Delete(ctx, claims.JTI); err != nil {
-		// 削除失敗は警告ログに留めるが、処理は続行する (トークン回転の主要な目的は新しいトークンの発行)
-		log.Printf("WARN: Failed to delete old refresh token (JTI: %s) during rotation, but proceeding: %v", claims.JTI, err)
+		slog.WarnContext(ctx, "Failed to delete old refresh token during rotation, but proceeding", slog.String("jti", claims.JTI), slog.Any("original_error", err.Error()))
 	}
 
-	log.Printf("INFO: Generating new token pair for UID: %s", claims.UID)
+	slog.InfoContext(ctx, "Generating new token pair", slog.String("uid", claims.UID))
 	newAccessToken, newRefreshToken, newJTI, expiresAt, err := h.jwtService.GenerateTokens(ctx, claims.UID)
 	if err != nil {
-		log.Printf("ERROR: Failed to generate new tokens for UID %s: %v", claims.UID, err)
-		return nil, fmt.Errorf("failed to generate new tokens: %w", err)
+		slog.ErrorContext(ctx, "Failed to generate new tokens", slog.String("uid", claims.UID), slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrInternal("Failed to generate new tokens", err)
 	}
 
-	log.Printf("INFO: Saving new refresh token to KV for new JTI: %s, UID: %s", newJTI, claims.UID)
+	slog.InfoContext(ctx, "Saving new refresh token to KV", slog.String("new_jti", newJTI), slog.String("uid", claims.UID))
 	if err := h.refreshTokenRepo.Save(ctx, newJTI, claims.UID, h.refreshTokenTTL); err != nil {
-		log.Printf("ERROR: Failed to save new refresh token to KV for new JTI %s, UID %s: %v", newJTI, claims.UID, err)
-		return nil, fmt.Errorf("failed to save new refresh token: %w", err)
+		slog.ErrorContext(ctx, "Failed to save new refresh token to KV", slog.String("new_jti", newJTI), slog.String("uid", claims.UID), slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrInternal("Failed to save new refresh token to KV store", err)
 	}
 
-	log.Printf("INFO: Successfully refreshed tokens for UID: %s. New JTI: %s", claims.UID, newJTI)
+	slog.InfoContext(ctx, "Successfully refreshed tokens", slog.String("uid", claims.UID), slog.String("new_jti", newJTI))
 	return &RefreshTokenResult{
 		AccessToken:  newAccessToken,
 		RefreshToken: newRefreshToken,

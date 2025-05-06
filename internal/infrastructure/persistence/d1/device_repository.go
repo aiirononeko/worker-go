@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"errors" // For errors.Is
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/device"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
-	db "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/d1/sql" // Import sqlc generated code
+	db "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/d1/sql"
 )
 
 // d1DeviceRepository は DeviceRepository の D1 実装です。
@@ -28,7 +29,10 @@ const deviceSqliteTimeFormat = "2006-01-02 15:04:05" // Keep this for time forma
 // Save はデバイス情報を D1 に保存します (sqlc の UpsertDevice を使用)。
 func (r *d1DeviceRepository) Save(ctx context.Context, d *device.Device) error {
 	q := db.New(r.db)
-	log.Printf("INFO: Attempting to save device via sqlc. DeviceID: %s, UserID: %v", d.ID.String(), d.UserID)
+	slog.InfoContext(ctx, "Attempting to save device via sqlc",
+		slog.String("deviceID", d.ID.String()),
+		slog.Any("userID", d.UserID),
+	)
 
 	var userID sql.NullString
 	if d.UserID != nil {
@@ -44,35 +48,46 @@ func (r *d1DeviceRepository) Save(ctx context.Context, d *device.Device) error {
 
 	err := q.UpsertDevice(ctx, params)
 	if err != nil {
-		log.Printf("ERROR: Failed to sqlc UpsertDevice %s: %v", d.ID.String(), err)
+		slog.ErrorContext(ctx, "Failed to sqlc UpsertDevice",
+			slog.String("deviceID", d.ID.String()),
+			slog.Any("error", err),
+		)
 		// Consider mapping specific DB errors (like constraint violations if any) to domain errors here
-		return fmt.Errorf("sqlc upsert device failed for %s: %w", d.ID.String(), err)
+		return apperror.NewErrInternal(fmt.Sprintf("Failed to save device %s to DB", d.ID.String()), err)
 	}
 
-	log.Printf("INFO: Successfully saved device via sqlc. DeviceID: %s", d.ID.String())
+	slog.InfoContext(ctx, "Successfully saved device via sqlc", slog.String("deviceID", d.ID.String()))
 	return nil
 }
 
 // FindByID は D1 から ID でデバイスを検索します (sqlc の GetDevice を使用)。
 func (r *d1DeviceRepository) FindByID(ctx context.Context, id entity.DeviceID) (*device.Device, error) {
 	q := db.New(r.db)
-	log.Printf("INFO: Attempting to find device by ID via sqlc: %s", id.String())
+	slog.InfoContext(ctx, "Attempting to find device by ID via sqlc", slog.String("deviceID", id.String()))
 
 	row, err := q.GetDevice(ctx, id.String())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			log.Printf("INFO: sqlc GetDevice: No device found for ID: %s", id.String())
-			return nil, nil // Not found, return nil, nil as per interface comment
+			slog.InfoContext(ctx, "sqlc GetDevice: No device found", slog.String("deviceID", id.String()))
+			// Return specific NotFound error instead of (nil, nil)
+			return nil, apperror.NewErrNotFound("device", id.String())
 		}
-		log.Printf("ERROR: Failed to sqlc GetDevice by ID %s: %v", id.String(), err)
-		return nil, fmt.Errorf("sqlc get device failed for ID %s: %w", id.String(), err)
+		slog.ErrorContext(ctx, "Failed to sqlc GetDevice by ID",
+			slog.String("deviceID", id.String()),
+			slog.Any("error", err),
+		)
+		return nil, apperror.NewErrInternal(fmt.Sprintf("Failed to get device %s from DB", id.String()), err)
 	}
 
 	// Map sqlc row to domain entity
 	deviceID, err := entity.NewDeviceID(row.ID)
 	if err != nil {
-		log.Printf("ERROR: Failed to parse DeviceID '%s' from DB (sqlc result): %v", row.ID, err)
-		return nil, fmt.Errorf("failed to parse device id '%s' from DB: %w", row.ID, err)
+		slog.ErrorContext(ctx, "Failed to parse DeviceID from DB (sqlc result)",
+			slog.String("db_id", row.ID),
+			slog.String("target_device_id", id.String()), // For context, which device were we trying to hydrate
+			slog.Any("error", err),
+		)
+		return nil, apperror.NewErrInternal(fmt.Sprintf("Failed to parse device ID '%s' from DB for device %s", row.ID, id.String()), err)
 	}
 
 	d := &device.Device{ID: deviceID}
@@ -85,17 +100,28 @@ func (r *d1DeviceRepository) FindByID(ctx context.Context, id entity.DeviceID) (
 
 	createdAt, err := time.Parse(deviceSqliteTimeFormat, row.CreatedAt)
 	if err != nil {
-		log.Printf("WARN: Failed to parse created_at string '%s' from DB (sqlc result) for Device ID %s: %v", row.CreatedAt, id.String(), err)
-		return nil, fmt.Errorf("failed to parse created_at for device ID %s: %w", id.String(), err)
+		slog.WarnContext(ctx, "Failed to parse created_at from DB (sqlc result)",
+			slog.String("deviceID", id.String()),
+			slog.String("db_created_at", row.CreatedAt),
+			slog.Any("error", err),
+		)
+		return nil, apperror.NewErrInternal(fmt.Sprintf("Failed to parse created_at for device %s from DB", id.String()), err)
 	}
 	lastSeenAt, err := time.Parse(deviceSqliteTimeFormat, row.LastSeenAt)
 	if err != nil {
-		log.Printf("WARN: Failed to parse last_seen_at string '%s' from DB (sqlc result) for Device ID %s: %v", row.LastSeenAt, id.String(), err)
-		return nil, fmt.Errorf("failed to parse last_seen_at for device ID %s: %w", id.String(), err)
+		slog.WarnContext(ctx, "Failed to parse last_seen_at from DB (sqlc result)",
+			slog.String("deviceID", id.String()),
+			slog.String("db_last_seen_at", row.LastSeenAt),
+			slog.Any("error", err),
+		)
+		return nil, apperror.NewErrInternal(fmt.Sprintf("Failed to parse last_seen_at for device %s from DB", id.String()), err)
 	}
 	d.CreatedAt = createdAt
 	d.LastSeenAt = lastSeenAt
 
-	log.Printf("INFO: Successfully found device by ID via sqlc: %s. UserID: %v", id.String(), d.UserID)
+	slog.InfoContext(ctx, "Successfully found device by ID via sqlc",
+		slog.String("deviceID", id.String()),
+		slog.Any("userID", d.UserID),
+	)
 	return d, nil
 }

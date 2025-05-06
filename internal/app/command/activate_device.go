@@ -2,10 +2,13 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/device"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
@@ -48,63 +51,61 @@ func NewActivateDeviceHandler(deviceRepo device.DeviceRepository, jwtService dom
 }
 
 func (h *activateDeviceHandler) Handle(ctx context.Context, cmd ActivateDeviceCommand) (*ActivateDeviceResult, error) {
-	log.Printf("INFO: Starting device activation for DeviceID: %s", cmd.DeviceID)
+	slog.InfoContext(ctx, "Starting device activation", slog.String("deviceID", cmd.DeviceID))
 
-	// Convert string cmd.DeviceID to entity.DeviceID for repository and domain use
 	deviceIDValue, err := entity.NewDeviceID(cmd.DeviceID)
 	if err != nil {
-		log.Printf("ERROR: Invalid device ID '%s' in ActivateDeviceCommand: %v", cmd.DeviceID, err)
-		// Consider returning a more specific validation error if NewDeviceID provides it
-		return nil, fmt.Errorf("invalid device ID '%s': %w", cmd.DeviceID, err)
+		slog.WarnContext(ctx, "Invalid device ID in command", slog.String("deviceID", cmd.DeviceID), slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrBadRequest(fmt.Sprintf("Invalid device ID format: %s", cmd.DeviceID), err.Error())
 	}
 
-	log.Printf("INFO: Finding or creating device for DeviceID: %s", deviceIDValue.String())
+	slog.InfoContext(ctx, "Finding device by ID", slog.String("deviceID", deviceIDValue.String()))
 	existingDevice, err := h.deviceRepo.FindByID(ctx, deviceIDValue)
-	if err != nil {
-		// Assuming FindByID might return a specific error for not found, or (nil, nil)
-		// If it's a generic error, log and return
-		log.Printf("ERROR: Failed to find device by ID %s: %v", deviceIDValue.String(), err)
-		return nil, fmt.Errorf("failed to find device: %w", err)
-	}
 
 	var dev *device.Device
-	if existingDevice == nil {
-		log.Printf("INFO: No existing device found for DeviceID %s, creating new one.", deviceIDValue.String())
-		dev, err = device.NewDevice(cmd.DeviceID, nil) // cmd.DeviceID is string, NewDevice handles conversion
-		if err != nil {
-			log.Printf("ERROR: Failed to create new device instance for DeviceID %s: %v", cmd.DeviceID, err)
-			return nil, fmt.Errorf("failed to instantiate device: %w", err)
+	if err != nil {
+		var notFoundErr *apperror.ErrNotFound
+		if errors.As(err, &notFoundErr) {
+			slog.InfoContext(ctx, "No existing device found, creating new one", slog.String("deviceID", deviceIDValue.String()))
+			dev, err = device.NewDevice(cmd.DeviceID, nil)
+			if err != nil {
+				slog.ErrorContext(ctx, "Failed to create new device instance after NotFound", slog.String("deviceID", cmd.DeviceID), slog.Any("original_error", err.Error()))
+				if strings.Contains(err.Error(), "invalid device ID format") {
+					return nil, apperror.NewErrBadRequest(fmt.Sprintf("Failed to instantiate new device due to invalid ID: %s", cmd.DeviceID), err.Error())
+				}
+				return nil, apperror.NewErrInternal("Failed to instantiate new device", err)
+			}
+		} else {
+			slog.ErrorContext(ctx, "Failed to find device by ID (non-NotFound error)", slog.String("deviceID", deviceIDValue.String()), slog.Any("original_error", err.Error()))
+			return nil, apperror.NewErrInternal("Database error while finding device", err)
 		}
 	} else {
-		log.Printf("INFO: Existing device found for DeviceID %s, updating last seen.", deviceIDValue.String())
+		slog.InfoContext(ctx, "Existing device found, updating last seen", slog.String("deviceID", deviceIDValue.String()))
 		dev = existingDevice
 		dev.UpdateLastSeen()
 	}
 
-	log.Printf("INFO: Saving device information for DeviceID: %s (User ID: %v)", dev.ID.String(), dev.UserID)
+	slog.InfoContext(ctx, "Saving device information", slog.String("deviceID", dev.ID.String()), slog.Any("userID", dev.UserID))
 	if err := h.deviceRepo.Save(ctx, dev); err != nil {
-		log.Printf("ERROR: Failed to save device for DeviceID %s: %v", dev.ID.String(), err)
-		return nil, fmt.Errorf("failed to save device: %w", err)
+		slog.ErrorContext(ctx, "Failed to save device", slog.String("deviceID", dev.ID.String()), slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrInternal("Database error while saving device", err)
 	}
 
-	// Use the original string device ID from the command for the UID prefix logic if needed,
-	// or ensure dev.ID.String() is used consistently if it should be the canonical one.
-	// For JWT UID, it's common to use the canonical (potentially normalized) ID.
-	uid := fmt.Sprintf("device:%s", dev.ID.String()) // Use dev.ID.String()
-	log.Printf("INFO: Generating JWT for UID: %s", uid)
+	uid := fmt.Sprintf("device:%s", dev.ID.String())
+	slog.InfoContext(ctx, "Generating JWT", slog.String("uid", uid))
 	accessToken, refreshToken, refreshTokenJTI, expiresAt, err := h.jwtService.GenerateTokens(ctx, uid)
 	if err != nil {
-		log.Printf("ERROR: Failed to generate tokens for UID %s: %v", uid, err)
-		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+		slog.ErrorContext(ctx, "Failed to generate tokens", slog.String("uid", uid), slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrInternal("Failed to generate JWT tokens", err)
 	}
 
-	log.Printf("INFO: Saving refresh token to KV for JTI: %s, UID: %s", refreshTokenJTI, uid)
+	slog.InfoContext(ctx, "Saving refresh token to KV", slog.String("jti", refreshTokenJTI), slog.String("uid", uid))
 	if err := h.refreshTokenRepo.Save(ctx, refreshTokenJTI, uid, h.refreshTokenTTL); err != nil {
-		log.Printf("ERROR: Failed to save refresh token to KV for JTI %s, UID %s: %v", refreshTokenJTI, uid, err)
-		return nil, fmt.Errorf("failed to save refresh token state: %w", err)
+		slog.ErrorContext(ctx, "Failed to save refresh token to KV", slog.String("jti", refreshTokenJTI), slog.String("uid", uid), slog.Any("original_error", err.Error()))
+		return nil, apperror.NewErrInternal("Failed to save refresh token to KV store", err)
 	}
 
-	log.Printf("INFO: Successfully activated device and generated tokens for DeviceID: %s (UID: %s)", cmd.DeviceID, uid)
+	slog.InfoContext(ctx, "Successfully activated device and generated tokens", slog.String("deviceID", cmd.DeviceID), slog.String("uid", uid))
 	return &ActivateDeviceResult{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,

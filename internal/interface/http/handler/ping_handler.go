@@ -2,10 +2,11 @@ package handler
 
 import (
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/aiirononeko/bulktrack-api/internal/app/query"
+	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
 )
 
 // PingHandler は /ping エンドポイントのリクエストを処理します。
@@ -20,14 +21,15 @@ func NewPingHandler(ps query.PingQueryService) *PingHandler {
 
 // ServeHTTP は GET /ping リクエストを処理します。
 func (h *PingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("INFO: Received Ping request. Path: %s", r.URL.Path)
+	logger := middleware.LoggerFromContext(r.Context())
+	logger.Info("Received Ping request", slog.String("path", r.URL.Path))
 
 	result := h.pingService.Execute(r.Context())
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(result); err != nil {
-		log.Printf("ERROR: Failed to encode Ping response: %v. Path: %s", err, r.URL.Path)
+		logger.Error("Failed to encode Ping response", slog.String("path", r.URL.Path), slog.Any("err", err))
 	}
-	log.Printf("INFO: Successfully processed Ping request. Path: %s", r.URL.Path)
+	logger.Info("Successfully processed Ping request", slog.String("path", r.URL.Path))
 }

@@ -3,8 +3,9 @@ package command
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
 )
 
@@ -37,35 +38,37 @@ func NewLogoutHandler(jwtService domainAuth.JWTService, refreshTokenRepo domainA
 }
 
 func (h *logoutHandler) Handle(ctx context.Context, cmd LogoutCommand) error {
-	log.Printf("INFO: Starting logout process.") // リフレッシュトークン自体はログに出さない
+	slog.InfoContext(ctx, "Starting logout process.")
 
 	if cmd.RefreshToken == "" {
-		log.Printf("ERROR: Refresh token is empty in LogoutCommand")
-		return fmt.Errorf("refresh token is required")
+		slog.WarnContext(ctx, "Refresh token is empty in LogoutCommand")
+		return apperror.NewErrBadRequest("Refresh token is required", "")
 	}
 
-	log.Printf("INFO: Verifying refresh token for logout.")
+	slog.InfoContext(ctx, "Verifying refresh token for logout.")
 	claims, err := h.jwtService.VerifyToken(ctx, cmd.RefreshToken)
 	if err != nil {
-		// トークンが無効でもログアウト処理自体はエラーにしない場合もあるが、
-		// KVから削除する対象を特定できないため、ここではエラーとする。
-		log.Printf("ERROR: Failed to verify refresh token during logout: %v", err)
-		return fmt.Errorf("failed to verify refresh token for logout: %w", err)
+		slog.WarnContext(ctx, "Failed to verify refresh token during logout", slog.Any("original_error", err.Error()))
+		return apperror.NewErrUnauthorized(fmt.Sprintf("Invalid refresh token for logout: %s", err.Error()))
 	}
 
 	if claims.JTI == "" {
-		log.Printf("ERROR: Invalid refresh token during logout: missing JTI claim. UID from token: %s", claims.UID)
-		return fmt.Errorf("invalid refresh token for logout: missing jti claim")
+		slog.WarnContext(ctx, "Invalid refresh token during logout: missing JTI claim", slog.String("uid_from_token", claims.UID))
+		return apperror.NewErrUnauthorized("Invalid refresh token for logout: missing JTI claim")
 	}
-	log.Printf("INFO: Refresh token verified for logout. JTI: %s, UID: %s", claims.JTI, claims.UID)
+	slog.InfoContext(ctx, "Refresh token verified for logout", slog.String("jti", claims.JTI), slog.String("uid", claims.UID))
 
-	log.Printf("INFO: Deleting refresh token (JTI: %s) from repository for logout.", claims.JTI)
+	slog.InfoContext(ctx, "Deleting refresh token from repository for logout", slog.String("jti", claims.JTI))
 	if err := h.refreshTokenRepo.Delete(ctx, claims.JTI); err != nil {
-		// 既に削除されている場合やKV操作失敗もエラーとして記録
-		log.Printf("ERROR: Failed to delete refresh token (JTI: %s) from repository during logout: %v", claims.JTI, err)
-		return fmt.Errorf("failed to delete refresh token from repository: %w", err)
+		// 既に削除されている場合(ErrNotFoundなど)や、KVストアの一時的な障害(ErrInternal)などが考えられる。
+		// ログアウト処理としては、既に存在しないなら成功とみなしても良いが、ここではKV操作の失敗は内部エラーとする。
+		slog.ErrorContext(ctx, "Failed to delete refresh token from repository during logout",
+			slog.String("jti", claims.JTI),
+			slog.Any("original_error", err.Error()),
+		)
+		return apperror.NewErrInternal("Failed to delete refresh token from KV store during logout", err)
 	}
 
-	log.Printf("INFO: Successfully logged out by deleting refresh token (JTI: %s) for UID: %s", claims.JTI, claims.UID)
+	slog.InfoContext(ctx, "Successfully logged out by deleting refresh token", slog.String("jti", claims.JTI), slog.String("uid", claims.UID))
 	return nil
 }

@@ -1,14 +1,15 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"
 	"github.com/aiirononeko/bulktrack-api/internal/app/command"
 	"github.com/aiirononeko/bulktrack-api/internal/app/query"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
@@ -34,11 +35,7 @@ type MenuDTO struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// ErrorResponse is a generic JSON error response body.
-type ErrorResponse struct {
-	Error   string `json:"error"`             // A high-level error message string.
-	Details string `json:"details,omitempty"` // More detailed error information, often the error.Error() string.
-}
+// ErrorResponse struct and sendJSONError func are now in response_util.go
 
 // --- Menu Handler (Handles multiple methods for /v1/menus) --- //
 
@@ -58,105 +55,140 @@ func NewMenuHandler(lms query.ListMenusQueryService, cmdHandler *command.CreateM
 
 // ServeHTTP は /v1/menus へのリクエストをメソッドに応じて処理します。
 func (h *MenuHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log.Printf("DEBUG: MenuHandler.ServeHTTP called. Perceived Method: [%s], Path: [%s]", r.Method, r.URL.Path)
+	ctx := r.Context()
+	logger := middleware.LoggerFromContext(ctx)
 
+	r = r.WithContext(context.WithValue(ctx, middleware.LoggerKey, logger))
+
+	logger.DebugContext(ctx, "MenuHandler ServeHTTP called", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 	switch r.Method {
 	case http.MethodGet:
-		log.Printf("DEBUG: Routing to handleListMenus for method [%s]", r.Method)
-		h.handleListMenus(w, r)
+		logger.DebugContext(ctx, "Routing to list handler")
+		h.list(w, r)
 	case http.MethodPost:
-		log.Printf("DEBUG: Routing to handleCreateMenu for method [%s]", r.Method)
-		h.handleCreateMenu(w, r)
+		logger.DebugContext(ctx, "Routing to create handler")
+		h.create(w, r)
 	default:
-		log.Printf("WARN: Method [%s] not allowed for path [%s]", r.Method, r.URL.Path)
-		sendJSONError(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed, "")
+		logger.WarnContext(ctx, "Method not allowed for menu handler", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		SendJSONError(w, logger, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed, "")
 	}
 }
 
-// handleListMenus は GET /v1/menus リクエストを処理します。
-func (h *MenuHandler) handleListMenus(w http.ResponseWriter, r *http.Request) {
-	log.Printf("INFO: Received ListMenus request. Path: %s", r.URL.Path)
+// list は GET /v1/menus リクエストを処理します。
+func (h *MenuHandler) list(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := middleware.LoggerFromContext(ctx)
+	logger.InfoContext(ctx, "Processing list menus request")
 
-	ctxUID, ok := middleware.GetDeviceIDFromContext(r.Context())
+	uid, ok := middleware.GetDeviceIDFromContext(ctx)
 	if !ok {
-		log.Printf("ERROR: UID not found in context for ListMenus. Path: %s", r.URL.Path)
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized, "UID not found in context")
+		err := apperror.NewErrUnauthorized("UID not found in context")
+		logger.WarnContext(ctx, "Authorization error in list menus", slog.Any("error", err))
+		SendJSONError(w, logger, err.Error(), http.StatusUnauthorized, "")
 		return
 	}
 
-	if !strings.HasPrefix(ctxUID, "device:") {
-		log.Printf("ERROR: ListMenus currently only supports device context, got UID: %s. Path: %s", ctxUID, r.URL.Path)
-		sendJSONError(w, "Bad Request", http.StatusBadRequest, "Operation not supported for this token type")
+	logger = logger.With(slog.String("uid", uid))
+
+	if !strings.HasPrefix(uid, "device:") {
+		err := apperror.NewErrForbidden("Operation not supported for this token type for list menus")
+		logger.WarnContext(ctx, "Forbidden error in list menus", slog.Any("error", err))
+		SendJSONError(w, logger, err.Error(), http.StatusForbidden, "")
 		return
 	}
-	stringPureDeviceID := strings.TrimPrefix(ctxUID, "device:")
-
-	// Convert string to entity.DeviceID
+	stringPureDeviceID := strings.TrimPrefix(uid, "device:")
 	domainDeviceID, err := entity.NewDeviceID(stringPureDeviceID)
 	if err != nil {
-		log.Printf("ERROR: Parsed pureDeviceID '%s' from UID '%s' is not a valid UUID: %v. Path: %s", stringPureDeviceID, ctxUID, err, r.URL.Path)
-		sendJSONError(w, "Bad Request", http.StatusBadRequest, fmt.Sprintf("Invalid device identifier format in token: %s. Error: %v", stringPureDeviceID, err))
+		appErr := apperror.NewErrBadRequest("Invalid device identifier in token", err.Error())
+		logger.WarnContext(ctx, "Failed to parse pure DeviceID from UID for list menus", slog.Any("error", appErr))
+		SendJSONError(w, logger, appErr.Error(), http.StatusBadRequest, appErr.Details)
 		return
 	}
 
-	returnedDTOs, err := h.listMenusQuery.Execute(r.Context(), domainDeviceID)
-	if err != nil {
-		log.Printf("ERROR: Failed to execute ListMenus query for DeviceID %s: %v. Path: %s", domainDeviceID.String(), err, r.URL.Path)
-		sendJSONError(w, "Internal Server Error", http.StatusInternalServerError, "Failed to retrieve menus")
+	logger = logger.With(slog.String("device_id", domainDeviceID.String()))
+
+	returnedDTOs, queryErr := h.listMenusQuery.Execute(ctx, domainDeviceID)
+	if queryErr != nil {
+		var nfErr *apperror.ErrNotFound
+		var internalErr *apperror.ErrInternal
+
+		if errors.As(queryErr, &nfErr) {
+			logger.InfoContext(ctx, "ListMenus query returned not found", slog.Any("error", queryErr))
+			SendJSONError(w, logger, nfErr.Error(), http.StatusNotFound, "")
+		} else if errors.As(queryErr, &internalErr) {
+			logger.ErrorContext(ctx, "Internal error from menu repository while listing menus", slog.Any("error", queryErr))
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, "Failed to retrieve menus")
+		} else {
+			logger.ErrorContext(ctx, "Unexpected error from menu repository while listing menus", slog.Any("original_error", queryErr.Error()))
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, "Failed to retrieve menus")
+		}
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(returnedDTOs); err != nil {
-		log.Printf("ERROR: Failed to encode ListMenus response: %v. Path: %s", err, r.URL.Path)
+		logger.ErrorContext(ctx, "Failed to encode list menus response", slog.Any("error", err))
 	}
-	log.Printf("INFO: Successfully processed ListMenus request for DeviceID %s. Path: %s. Returned %d menus.", domainDeviceID.String(), r.URL.Path, len(returnedDTOs))
+	logger.InfoContext(ctx, "Successfully processed list menus request", slog.Int("menu_count", len(returnedDTOs)))
 }
 
-// handleCreateMenu は POST /v1/menus リクエストを処理します。
-func (h *MenuHandler) handleCreateMenu(w http.ResponseWriter, r *http.Request) {
-	log.Printf("INFO: Received CreateMenu request. Path: %s", r.URL.Path)
+// create は POST /v1/menus リクエストを処理します。
+func (h *MenuHandler) create(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := middleware.LoggerFromContext(ctx)
+	logger.InfoContext(ctx, "Processing create menu request")
 
-	deviceIDWithPrefix, ok := middleware.GetDeviceIDFromContext(r.Context())
+	uid, ok := middleware.GetDeviceIDFromContext(ctx)
 	if !ok {
-		log.Printf("ERROR: Device ID not found in context for CreateMenu. Path: %s", r.URL.Path)
-		sendJSONError(w, "Unauthorized", http.StatusUnauthorized, "Device ID not found in context")
+		err := apperror.NewErrUnauthorized("UID not found in context")
+		logger.WarnContext(ctx, "Authorization error in create menu", slog.Any("error", err))
+		SendJSONError(w, logger, err.Error(), http.StatusUnauthorized, "")
 		return
 	}
+	logger = logger.With(slog.String("uid", uid))
 
 	var req CreateMenuRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		log.Printf("ERROR: Failed to decode CreateMenu request body: %v. Path: %s", err, r.URL.Path)
-		sendJSONError(w, "Bad Request", http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err))
-		return
-	}
-
-	if req.Name == "" {
-		log.Printf("WARN: Validation failed for CreateMenu: Name is required. Path: %s", r.URL.Path)
-		sendJSONError(w, "Bad Request", http.StatusBadRequest, "Name is required")
+		appErr := apperror.NewErrBadRequest("Invalid request body", err.Error())
+		logger.WarnContext(ctx, "Failed to decode request body for create menu", slog.Any("error", appErr))
+		SendJSONError(w, logger, appErr.Error(), http.StatusBadRequest, appErr.Details)
 		return
 	}
 
 	cmd := command.CreateMenuCommand{
-		DeviceID:    deviceIDWithPrefix,
+		DeviceID:    uid,
 		Name:        req.Name,
 		Description: req.Description,
 		SortOrder:   req.SortOrder,
 	}
 
-	createdMenu, err := h.createMenuCmdHandler.Handle(r.Context(), cmd)
-	if err != nil {
-		log.Printf("ERROR: CreateMenu command failed for menu name '%s': %v. Path: %s", req.Name, err, r.URL.Path)
+	createdMenu, cmdErr := h.createMenuCmdHandler.Handle(ctx, cmd)
+	if cmdErr != nil {
 		var valErr *command.ErrValidation
 		var conflictErr *command.ErrMenuNameConflict
+		var appNotFoundErr *apperror.ErrNotFound
+		var appUnauthorizedErr *apperror.ErrUnauthorized
+		var appForbiddenErr *apperror.ErrForbidden
 
-		if errors.As(err, &valErr) {
-			sendJSONError(w, "Bad Request", http.StatusBadRequest, valErr.Error())
-		} else if errors.As(err, &conflictErr) {
-			sendJSONError(w, "Conflict", http.StatusConflict, conflictErr.Error())
+		if errors.As(cmdErr, &valErr) {
+			logger.WarnContext(ctx, "CreateMenu validation failed", slog.Any("error", cmdErr))
+			SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, valErr.Error())
+		} else if errors.As(cmdErr, &conflictErr) {
+			logger.WarnContext(ctx, "CreateMenu conflict detected", slog.Any("error", cmdErr))
+			SendJSONError(w, logger, "Conflict", http.StatusConflict, conflictErr.Error())
+		} else if errors.As(cmdErr, &appUnauthorizedErr) {
+			logger.WarnContext(ctx, "CreateMenu unauthorized by application logic", slog.Any("error", cmdErr))
+			SendJSONError(w, logger, appUnauthorizedErr.Error(), http.StatusUnauthorized, "")
+		} else if errors.As(cmdErr, &appForbiddenErr) {
+			logger.WarnContext(ctx, "CreateMenu forbidden by application logic", slog.Any("error", cmdErr))
+			SendJSONError(w, logger, appForbiddenErr.Error(), http.StatusForbidden, "")
+		} else if errors.As(cmdErr, &appNotFoundErr) {
+			logger.InfoContext(ctx, "CreateMenu command resulted in not found", slog.Any("error", cmdErr))
+			SendJSONError(w, logger, appNotFoundErr.Error(), http.StatusNotFound, "")
 		} else {
-			sendJSONError(w, "Internal Server Error", http.StatusInternalServerError, "Failed to create menu")
+			logger.ErrorContext(ctx, "CreateMenu command failed with internal error", slog.Any("error", cmdErr))
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, "Failed to create menu")
 		}
 		return
 	}
@@ -173,24 +205,7 @@ func (h *MenuHandler) handleCreateMenu(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(respDTO); err != nil {
-		log.Printf("ERROR: Failed to encode CreateMenu response: %v. Path: %s", err, r.URL.Path)
+		logger.ErrorContext(ctx, "Failed to encode create menu response", slog.Any("error", err))
 	}
-	log.Printf("INFO: Successfully processed CreateMenu request for menu name '%s'. Path: %s. Created Menu ID: %s", req.Name, r.URL.Path, respDTO.ID)
-}
-
-// sendJSONError はJSON形式でエラーレスポンスを送信するヘルパー関数です。
-func sendJSONError(w http.ResponseWriter, message string, statusCode int, details string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(statusCode)
-	response := ErrorResponse{
-		Error:   message,
-		Details: details,
-	}
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		// Fallback if JSON encoding fails, though client might have already received headers.
-		// Log the original error and the encoding error.
-		log.Printf("ERROR: Original error was for status %d, message: %s, details: %s. Additionally, failed to encode this error to JSON: %v", statusCode, message, details, err)
-		// Avoid writing again if headers are sent, but if not, http.Error could be a last resort.
-		// However, the WriteHeader above likely committed the headers.
-	}
+	logger.InfoContext(ctx, "Successfully processed create menu request", slog.String("menu_id", respDTO.ID))
 }

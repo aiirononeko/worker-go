@@ -61,7 +61,7 @@ The application utilizes a middleware chaining approach for handling cross-cutti
 
 - **Global Middlewares**: Applied to most routes.
     - `CORS`: Handles Cross-Origin Resource Sharing headers (allows all origins in development). Defined in `internal/interface/http/middleware/cors.go`.
-    - `Logging`: Logs basic HTTP request/response details (method, path, status, duration). Defined in `internal/interface/http/middleware/logging.go`.
+    - `Logging`: Utilizes Go's `slog` for structured JSON logging. Injects a request-scoped logger (with `request_id`, method, path, user-agent, etc.) into the context via `context.WithValue`. Logs final request details (status, duration, user ID if available) at the end of the request lifecycle. Defined in `internal/interface/http/middleware/logging.go`.
 - **Route-Specific Middlewares**: Applied only to specific routes requiring them.
     - `RequireAuth`: Verifies the `Authorization: Bearer <token>` header using `JWTService` and injects the `uid` (e.g., `device:<uuid>`) into the request context. Defined in `internal/interface/http/middleware/auth.go`.
 - **Chaining**: Implemented using a helper function `middleware.Chain` in `internal/interface/http/middleware/middleware.go`.
@@ -83,19 +83,25 @@ bulktrack-api/
 │   └── config_test.go
 ├── internal/
 │   ├── domain/
+│   │   └── entity/          # Value Objects (e.g., DeviceID, MenuID)
+│   │   └── .../
 │   ├── app/
+│   │   ├── command/         # Command Handlers (Use Cases)
+│   │   ├── query/           # Query Services (Use Cases)
+│   │   ├── dto/             # Data Transfer Objects (API boundary)
+│   │   └── apperror/        # Application-specific error types
 │   ├── interface/
 │   │   └── http/
 │   │       ├── router.go
-│   │       ├── middleware/
-│   │       │   └── auth.go
-│   │       └── handler/
-│   │   ├── infrastructure/
-│   │   │   ├── persistence/
-│   │   │   │   └── d1/
-│   │   │   └── auth/
-│   │   └── platform/
-│   └── migrations/
+│   │       ├── middleware/    # HTTP Middlewares (CORS, Logging, Auth)
+│   │       └── handler/       # HTTP Handlers & Response Utils (e.g., response_util.go)
+│   ├── infrastructure/
+│   │   ├── persistence/
+│   │   │   ├── d1/          # D1 Repository Impl (sqlc)
+│   │   │   └── kv/          # KV Repository Impl (Refresh Tokens)
+│   │   └── auth/            # JWT Service Impl
+│   └── platform/            # (External service clients, etc. - if any)
+├── migrations/              # (DB schema changes - if using wrangler migrations)
 ├── scripts/
 ├── wrangler.jsonc
 ├── schema.sql               # ← デバイスIDベーススキーマ
@@ -168,24 +174,26 @@ CREATE TABLE IF NOT EXISTS menus (
 > 環境変数 `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` を `wrangler secret` で登録して下さい。
 
 1. **Prerequisites** (Go ≥ 1.23, wrangler ≥ 4, sqlc, …)
-2. `npx wrangler d1 create bulktrack-db`
-3. `npx wrangler d1 migrations apply bulktrack-db --local`
+2. `npx wrangler d1 create bulktrack-db` (if not already created)
+3. `npx wrangler d1 migrations apply bulktrack-db --local` (or apply schema directly)
 4. `sqlc generate -f internal/infrastructure/persistence/d1/sqlc.yaml`
-5. `npm start`
+5. `npm start` (runs `wrangler dev`)
 
 ---
 
-## 🪵 Logging Strategy (PoC Phase)
+## 🪵 Logging Strategy
 
-- **Goal**: Facilitate error investigation during the Proof of Concept phase.
-- **Approach**: Utilize the standard Go `log` package (`log.Printf`, etc.).
-    - Logs are automatically directed to Cloudflare Workers' logging system (`wrangler tail`).
-    - Focus on logging detailed error information (operation, relevant IDs, error messages) primarily within service and repository layers where errors occur.
-    - Minimal INFO level logging for key process steps (e.g., request handling start/end, successful operations).
-- **Current Implementation**:
-    - Logging middleware (`internal/interface/http/middleware/logging.go`) records basic HTTP request/response info (method, path, status, duration, user-agent).
-    - Key handlers, services, and repositories include `log.Printf` calls for errors and significant events.
-- **Future Considerations**: Introduce structured logging (e.g., `slog`) and context-based tracing (request IDs) as the application complexity grows.
+- **Approach**: Utilizes Go's standard library `log/slog` for structured JSON logging throughout the application.
+- **Middleware**: A dedicated logging middleware (`internal/interface/http/middleware/logging.go`) is employed to:
+    - Generate a unique `request_id` for each incoming HTTP request.
+    - Create a request-scoped `slog.Logger` instance enriched with initial request attributes (request ID, method, path, user-agent, client address).
+    - Inject this request-scoped logger into the request `context`.
+    - Log the final outcome of the request (status code, duration, user ID if available from auth middleware) using the request-scoped logger.
+- **Application Logging**: All application layers (handlers, commands, queries, repositories) retrieve the request-scoped logger from the context (`middleware.LoggerFromContext(ctx)`) and use it for logging.
+    - This ensures logs related to the same request share the same `request_id` and other contextual attributes, facilitating tracing and debugging.
+    - Errors are logged with structured details, often including the original error message using `slog.Any("error", err)` or similar.
+- **Output**: Logs are directed to standard output and automatically captured by Cloudflare Workers' logging system (viewable with `wrangler tail`).
+- **Error Handling Context**: Alongside logging, a set of custom error types defined in `internal/app/apperror` are used to propagate specific error conditions (e.g., `ErrNotFound`, `ErrUnauthorized`, `ErrBadRequest`, `ErrInternal`) from the application and infrastructure layers to the HTTP handlers, enabling consistent error responses.
 
 ---
 

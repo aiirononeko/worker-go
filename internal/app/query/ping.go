@@ -2,7 +2,7 @@ package query
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -30,11 +30,16 @@ func NewPingQueryService() PingQueryService {
 
 // Execute は Ping のユースケースを実行します。
 func (s *pingQueryServiceImpl) Execute(ctx context.Context) PingResult {
-	log.Printf("INFO: Executing Ping query.")
+	slog.InfoContext(ctx, "Executing Ping query.")
+	now := time.Now()
 	result := PingResult{
 		Message:   "pong",
-		Timestamp: time.Now(),
+		Timestamp: now,
 	}
-	log.Printf("INFO: Ping query executed successfully. Message: %s, Timestamp: %s", result.Message, result.Timestamp)
+	// ログに含める情報を構造化
+	slog.InfoContext(ctx, "Ping query executed successfully",
+		slog.String("message", result.Message),
+		slog.Time("timestamp", result.Timestamp),
+	)
 	return result
 }

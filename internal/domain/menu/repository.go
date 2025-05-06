@@ -5,12 +5,11 @@ import (
 	"time"
 
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
-	"github.com/google/uuid"
 )
 
 // Menu はドメインエンティティを表します。
 type Menu struct {
-	ID          uuid.UUID
+	ID          entity.MenuID
 	DeviceID    entity.DeviceID
 	Name        string
 	Description *string // ポインタ or sql.NullString に合わせた型が良いかも

@@ -4,7 +4,8 @@ package main
 
 import (
 	"database/sql"
-	"log"
+	"log/slog"
+	"os"
 
 	_ "github.com/syumai/workers/cloudflare/d1"
 	"github.com/syumai/workers/cloudflare/kv"
@@ -28,37 +29,57 @@ const (
 )
 
 func main() {
+	// Setup structured logger (slog)
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger) // Set as default logger for the application
+
+	// Replace standard log fatal with slog error and exit
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Panic recovered", slog.Any("recover_info", r))
+			// Optionally re-panic or os.Exit(1)
+		}
+	}()
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		// Use slog for fatal errors now
+		slog.Error("Failed to load config", slog.Any("error", err))
+		os.Exit(1) // Exit after logging fatal error
 	}
 
 	dbConn, err := sql.Open("d1", d1BindingName)
 	if err != nil {
-		log.Fatalf("Failed to sql.Open D1: %v", err)
+		slog.Error("Failed to sql.Open D1", slog.Any("error", err))
+		os.Exit(1)
 	}
 	defer dbConn.Close()
 	if err := dbConn.Ping(); err != nil {
-		log.Fatalf("Failed to ping D1: %v", err)
+		slog.Error("Failed to ping D1", slog.Any("error", err))
+		os.Exit(1)
 	}
-	log.Println("Successfully connected to D1 database via binding:", d1BindingName)
+	slog.Info("Successfully connected to D1 database", slog.String("binding", d1BindingName))
 
 	refreshTokenKV, err := kv.NewNamespace(refreshTokenKVBindingName)
 	if err != nil {
-		log.Fatalf("Failed to get KV namespace: %v", err)
+		slog.Error("Failed to get KV namespace", slog.String("binding", refreshTokenKVBindingName), slog.Any("error", err))
+		os.Exit(1)
 	}
-	log.Printf("Successfully bound to KV namespace: %s", refreshTokenKVBindingName)
+	slog.Info("Successfully bound to KV namespace", slog.String("binding", refreshTokenKVBindingName))
 
+	// --- Repositories ---
 	menuRepo := infraD1.NewMenuRepository(dbConn)
 	deviceRepo := infraD1.NewD1DeviceRepository(dbConn)
 	refreshTokenRepo := infraKV.NewKVRefreshTokenRepository(*refreshTokenKV)
 
+	// --- Services & Handlers ---
 	jwtService, err := infraAuth.NewJWTService(cfg.JWTPrivateKeyPEM, cfg.JWTPublicKeyPEM, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	if err != nil {
-		log.Fatalf("Failed to initialize JWT service: %v", err)
+		slog.Error("Failed to initialize JWT service", slog.Any("error", err))
+		os.Exit(1)
 	}
 
-	// --- Application Layer Handlers/Services ---
+	// Application Layer Handlers/Services
 	activateDeviceHandler := appCmd.NewActivateDeviceHandler(deviceRepo, jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
 	refreshTokenHandler := appCmd.NewRefreshTokenHandler(jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
 	logoutHandler := appCmd.NewLogoutHandler(jwtService, refreshTokenRepo)
@@ -66,7 +87,7 @@ func main() {
 	createMenuCmdHandler := appCmd.NewCreateMenuHandler(menuRepo)
 	pingService := appQuery.NewPingQueryService()
 
-	// --- HTTP Handlers ---
+	// HTTP Handlers - Use context-based logging now
 	menuHttpHandler := appHttpHandler.NewMenuHandler(listMenusQuery, createMenuCmdHandler)
 	pingHttpHandler := appHttpHandler.NewPingHandler(pingService)
 	authHttpHandler := appHttpHandler.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler)
@@ -103,6 +124,6 @@ func main() {
 
 	finalRouter := httpRouter.NewRouter(routerDeps)
 
-	log.Println("Starting server with sqlc-based device repository...")
+	slog.Info("Starting server", slog.String("config_source", "env/defaults"))
 	workers.Serve(finalRouter)
 }
