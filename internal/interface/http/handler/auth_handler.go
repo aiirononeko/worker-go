@@ -5,20 +5,22 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/aiirononeko/bulktrack-api/internal/app/command" // Application 層を import
+	appCmd "github.com/aiirononeko/bulktrack-api/internal/app/command" // Application 層を import
 )
 
 // AuthHandler は認証関連のエンドポイントを扱います。
 type AuthHandler struct {
-	activateDeviceCmd command.ActivateDeviceHandler
-	refreshTokenCmd   command.RefreshTokenHandler // RefreshTokenHandler への依存を追加
+	activateDeviceCmd appCmd.ActivateDeviceHandler
+	refreshTokenCmd   appCmd.RefreshTokenHandler
+	logoutCmd         appCmd.LogoutHandler // LogoutHandler への依存を追加
 }
 
 // NewAuthHandler は新しい AuthHandler を初期化します。
-func NewAuthHandler(activateDeviceCmd command.ActivateDeviceHandler, refreshTokenCmd command.RefreshTokenHandler) *AuthHandler {
+func NewAuthHandler(activateDeviceCmd appCmd.ActivateDeviceHandler, refreshTokenCmd appCmd.RefreshTokenHandler, logoutCmd appCmd.LogoutHandler) *AuthHandler {
 	return &AuthHandler{
 		activateDeviceCmd: activateDeviceCmd,
 		refreshTokenCmd:   refreshTokenCmd,
+		logoutCmd:         logoutCmd, // 依存を初期化
 	}
 }
 
@@ -32,7 +34,7 @@ func (h *AuthHandler) ActivateDevice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Application 層のコマンドを呼び出す
-	cmd := command.ActivateDeviceCommand{DeviceID: deviceID}
+	cmd := appCmd.ActivateDeviceCommand{DeviceID: deviceID}
 	result, err := h.activateDeviceCmd.Handle(r.Context(), cmd)
 	if err != nil {
 		http.Error(w, "Failed to activate device", http.StatusInternalServerError)
@@ -84,7 +86,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Application 層の RefreshTokenCommand を呼び出す
-	cmd := command.RefreshTokenCommand{RefreshToken: req.RefreshToken}
+	cmd := appCmd.RefreshTokenCommand{RefreshToken: req.RefreshToken}
 	result, err := h.refreshTokenCmd.Handle(r.Context(), cmd)
 	if err != nil {
 		http.Error(w, "Failed to refresh token", http.StatusInternalServerError)
@@ -103,4 +105,38 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 	}
+}
+
+// LogoutRequest はログアウトリクエストのボディを表します。
+type LogoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// Logout は受け取ったリフレッシュトークンを無効化します。
+// POST /v1/auth/logout
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// 1. リクエストボディをデコード
+	var req LogoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.RefreshToken == "" {
+		http.Error(w, "refresh_token is required", http.StatusBadRequest)
+		return
+	}
+
+	// 2. Application 層の LogoutCommand を呼び出す
+	cmd := appCmd.LogoutCommand{RefreshToken: req.RefreshToken}
+	if err := h.logoutCmd.Handle(r.Context(), cmd); err != nil {
+		// エラーの種類に応じてクライアントに返すステータスコードを検討する
+		// 例えば、トークンが無効だった場合は 400 Bad Request や 401 Unauthorized など
+		// KV操作失敗は 500 Internal Server Error
+		// ここでは詳細なエラーハンドリングは省略し、一律 500 を返す
+		http.Error(w, "Failed to logout", http.StatusInternalServerError)
+		return
+	}
+
+	// 3. 成功レスポンス (No Content)
+	w.WriteHeader(http.StatusNoContent)
 }

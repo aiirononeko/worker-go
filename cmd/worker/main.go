@@ -9,14 +9,13 @@ import (
 	_ "github.com/syumai/workers/cloudflare/d1"
 	"github.com/syumai/workers/cloudflare/kv"
 
-	// KV ライブラリを import
-	"github.com/aiirononeko/bulktrack-api/config"                      // 設定パッケージを import
-	appCmd "github.com/aiirononeko/bulktrack-api/internal/app/command" // Command パッケージ
+	"github.com/aiirononeko/bulktrack-api/config"
+	appCmd "github.com/aiirononeko/bulktrack-api/internal/app/command"
 	appQuery "github.com/aiirononeko/bulktrack-api/internal/app/query"
-	infraAuth "github.com/aiirononeko/bulktrack-api/internal/infrastructure/auth"         // Infra Auth パッケージ
-	infraD1 "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/d1" // Infra KV パッケージ
-	infraKV "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/kv" // Infra KV パッケージ
-	appRouter "github.com/aiirononeko/bulktrack-api/internal/interface/http"              // エイリアス appRouter を使用
+	infraAuth "github.com/aiirononeko/bulktrack-api/internal/infrastructure/auth"
+	infraD1 "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/d1"
+	infraKV "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/kv"
+	appRouter "github.com/aiirononeko/bulktrack-api/internal/interface/http"
 	appHttp "github.com/aiirononeko/bulktrack-api/internal/interface/http/handler"
 
 	"github.com/syumai/workers"
@@ -24,7 +23,7 @@ import (
 
 const (
 	d1BindingName             = "DB"
-	refreshTokenKVBindingName = "REFRESH_TOKENS_KV" // wrangler.jsonc で設定した KV binding 名
+	refreshTokenKVBindingName = "REFRESH_TOKENS_KV"
 )
 
 func main() {
@@ -69,13 +68,14 @@ func main() {
 	// Application Handlers (Commands & Queries)
 	activateDeviceHandler := appCmd.NewActivateDeviceHandler(deviceRepo, jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
 	refreshTokenHandler := appCmd.NewRefreshTokenHandler(jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
+	logoutHandler := appCmd.NewLogoutHandler(jwtService, refreshTokenRepo) // LogoutHandler を初期化
 	listMenusService := appQuery.NewListMenusQueryService(menuRepo)
 	pingService := appQuery.NewPingQueryService()
 
 	// Interface Handlers (HTTP)
 	listMenusHandler := appHttp.NewListMenusHandler(listMenusService)
 	pingHandler := appHttp.NewPingHandler(pingService)
-	authHandler := appHttp.NewAuthHandler(activateDeviceHandler, refreshTokenHandler) // Auth Handler を初期化
+	authHandler := appHttp.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler) // Auth Handler に logoutHandler を渡す
 
 	// Router を初期化して取得
 	routerDeps := appRouter.RouterDependencies{

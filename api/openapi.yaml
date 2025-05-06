@@ -71,6 +71,32 @@ paths:
           description: Internal Server Error.
       security: [] # No authentication required for this endpoint
 
+  /auth/logout:
+    post:
+      summary: Log out
+      operationId: logout
+      tags:
+        - Auth
+      description: >
+        Invalidates the provided refresh token, effectively logging the user out.
+        This endpoint does not require bearer authentication but relies on the validity of the refresh token.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '204':
+          description: Successfully logged out.
+        '400':
+          description: Bad Request (e.g., missing or malformed refresh_token in body).
+        '401':
+          description: Unauthorized (e.g., invalid, expired, or already revoked refresh token).
+        '500':
+          description: Internal Server Error.
+      security: [] # No authentication required for this endpoint
+
   # --- Existing Workout Endpoints --- #
   /workouts/{id}:
     get:
