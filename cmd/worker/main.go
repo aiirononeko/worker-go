@@ -33,12 +33,12 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	db, err := sql.Open("d1", d1BindingName)
+	dbConn, err := sql.Open("d1", d1BindingName)
 	if err != nil {
 		log.Fatalf("Failed to sql.Open D1: %v", err)
 	}
-	defer db.Close()
-	if err := db.Ping(); err != nil {
+	defer dbConn.Close()
+	if err := dbConn.Ping(); err != nil {
 		log.Fatalf("Failed to ping D1: %v", err)
 	}
 	log.Println("Successfully connected to D1 database via binding:", d1BindingName)
@@ -49,8 +49,8 @@ func main() {
 	}
 	log.Printf("Successfully bound to KV namespace: %s", refreshTokenKVBindingName)
 
-	menuRepo := infraD1.NewMenuRepository(db)
-	deviceRepo := infraD1.NewD1DeviceRepository(db)
+	menuRepo := infraD1.NewMenuRepository(dbConn)
+	deviceRepo := infraD1.NewD1DeviceRepository(dbConn)
 	refreshTokenRepo := infraKV.NewKVRefreshTokenRepository(*refreshTokenKV)
 
 	jwtService, err := infraAuth.NewJWTService(cfg.JWTPrivateKeyPEM, cfg.JWTPublicKeyPEM, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
@@ -103,6 +103,6 @@ func main() {
 
 	finalRouter := httpRouter.NewRouter(routerDeps)
 
-	log.Println("Starting server with combined MenuHandler and updated router config...")
+	log.Println("Starting server with sqlc-based device repository...")
 	workers.Serve(finalRouter)
 }

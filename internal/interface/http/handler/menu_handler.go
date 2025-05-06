@@ -11,8 +11,8 @@ import (
 
 	"github.com/aiirononeko/bulktrack-api/internal/app/command"
 	"github.com/aiirononeko/bulktrack-api/internal/app/query"
+	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
-	"github.com/google/uuid"
 )
 
 // --- DTOs (common for Menu endpoints) --- //
@@ -89,21 +89,19 @@ func (h *MenuHandler) handleListMenus(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "Bad Request", http.StatusBadRequest, "Operation not supported for this token type")
 		return
 	}
-	pureDeviceID := strings.TrimPrefix(ctxUID, "device:")
-	if pureDeviceID == "" {
-		log.Printf("ERROR: Empty pureDeviceID after trimming prefix from UID: %s. Path: %s", ctxUID, r.URL.Path)
-		sendJSONError(w, "Bad Request", http.StatusBadRequest, "Invalid device identifier in token (empty after trim)")
-		return
-	}
-	if _, err := uuid.Parse(pureDeviceID); err != nil {
-		log.Printf("ERROR: Parsed pureDeviceID '%s' from UID '%s' is not a valid UUID: %v. Path: %s", pureDeviceID, ctxUID, err, r.URL.Path)
-		sendJSONError(w, "Bad Request", http.StatusBadRequest, fmt.Sprintf("Invalid device identifier format in token: %s", pureDeviceID))
+	stringPureDeviceID := strings.TrimPrefix(ctxUID, "device:")
+
+	// Convert string to entity.DeviceID
+	domainDeviceID, err := entity.NewDeviceID(stringPureDeviceID)
+	if err != nil {
+		log.Printf("ERROR: Parsed pureDeviceID '%s' from UID '%s' is not a valid UUID: %v. Path: %s", stringPureDeviceID, ctxUID, err, r.URL.Path)
+		sendJSONError(w, "Bad Request", http.StatusBadRequest, fmt.Sprintf("Invalid device identifier format in token: %s. Error: %v", stringPureDeviceID, err))
 		return
 	}
 
-	returnedDTOs, err := h.listMenusQuery.Execute(r.Context(), pureDeviceID)
+	returnedDTOs, err := h.listMenusQuery.Execute(r.Context(), domainDeviceID)
 	if err != nil {
-		log.Printf("ERROR: Failed to execute ListMenus query for DeviceID %s: %v. Path: %s", pureDeviceID, err, r.URL.Path)
+		log.Printf("ERROR: Failed to execute ListMenus query for DeviceID %s: %v. Path: %s", domainDeviceID.String(), err, r.URL.Path)
 		sendJSONError(w, "Internal Server Error", http.StatusInternalServerError, "Failed to retrieve menus")
 		return
 	}
@@ -113,7 +111,7 @@ func (h *MenuHandler) handleListMenus(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(returnedDTOs); err != nil {
 		log.Printf("ERROR: Failed to encode ListMenus response: %v. Path: %s", err, r.URL.Path)
 	}
-	log.Printf("INFO: Successfully processed ListMenus request for DeviceID %s. Path: %s. Returned %d menus.", pureDeviceID, r.URL.Path, len(returnedDTOs))
+	log.Printf("INFO: Successfully processed ListMenus request for DeviceID %s. Path: %s. Returned %d menus.", domainDeviceID.String(), r.URL.Path, len(returnedDTOs))
 }
 
 // handleCreateMenu は POST /v1/menus リクエストを処理します。

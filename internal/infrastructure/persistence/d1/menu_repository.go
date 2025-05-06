@@ -7,7 +7,9 @@ import (
 	"log"  // For error logging during conversion
 	"time" // For time parsing
 
+	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/menu"
+
 	// Import sqlc generated package from the correct path with alias 'db'
 	"database/sql" // For sql.NullString
 
@@ -29,22 +31,28 @@ func NewMenuRepository(database db.DBTX) menu.MenuRepository {
 const sqliteTimeFormat = "2006-01-02 15:04:05"
 
 // ListMenusByDeviceId は指定されたデバイスIDのメニュー一覧を取得します。
-func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID string) ([]menu.Menu, error) {
+func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID entity.DeviceID) ([]menu.Menu, error) {
 	q := db.New(r.db)
 
-	rows, err := q.ListMenusByDeviceId(ctx, deviceID)
+	rows, err := q.ListMenusByDeviceId(ctx, deviceID.String()) // Use .String()
 	if err != nil {
 		// D1クエリ実行時のエラーをログに出力
-		log.Printf("ERROR: Failed to execute ListMenusByDeviceId query for DeviceID %s: %v", deviceID, err)
-		return nil, fmt.Errorf("d1 query ListMenusByDeviceId for device %s failed: %w", deviceID, err) // エラーをラップ
+		log.Printf("ERROR: Failed to execute ListMenusByDeviceId query for DeviceID %s: %v", deviceID.String(), err)
+		return nil, fmt.Errorf("d1 query ListMenusByDeviceId for device %s failed: %w", deviceID.String(), err) // エラーをラップ
 	}
 
-	menus := make([]menu.Menu, 0, len(rows))
+	menusResult := make([]menu.Menu, 0, len(rows))
 	for _, row := range rows {
 		id, err := uuid.Parse(row.ID)
 		if err != nil {
-			log.Printf("WARN: Failed to parse Menu ID UUID string '%s' for DeviceID %s: %v", row.ID, deviceID, err)
+			log.Printf("WARN: Failed to parse Menu ID UUID string '%s' for DeviceID %s: %v", row.ID, deviceID.String(), err)
 			continue // この行をスキップ
+		}
+
+		rowDeviceID, err := entity.NewDeviceID(row.DeviceID) // Convert string from DB to entity.DeviceID
+		if err != nil {
+			log.Printf("WARN: Failed to parse DeviceID string '%s' from DB for Menu ID %s: %v", row.DeviceID, row.ID, err)
+			continue
 		}
 
 		var description *string
@@ -55,19 +63,19 @@ func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID strin
 
 		createdAt, err := time.Parse(sqliteTimeFormat, row.CreatedAt)
 		if err != nil {
-			log.Printf("WARN: Failed to parse CreatedAt string '%s' for Menu ID %s, DeviceID %s: %v", row.CreatedAt, row.ID, deviceID, err)
+			log.Printf("WARN: Failed to parse CreatedAt string '%s' for Menu ID %s, DeviceID %s: %v", row.CreatedAt, row.ID, deviceID.String(), err)
 			continue
 		}
 
 		updatedAt, err := time.Parse(sqliteTimeFormat, row.UpdatedAt)
 		if err != nil {
-			log.Printf("WARN: Failed to parse UpdatedAt string '%s' for Menu ID %s, DeviceID %s: %v", row.UpdatedAt, row.ID, deviceID, err)
+			log.Printf("WARN: Failed to parse UpdatedAt string '%s' for Menu ID %s, DeviceID %s: %v", row.UpdatedAt, row.ID, deviceID.String(), err)
 			continue
 		}
 
-		menus = append(menus, menu.Menu{
+		menusResult = append(menusResult, menu.Menu{
 			ID:          id,
-			DeviceID:    row.DeviceID,
+			DeviceID:    rowDeviceID, // Assign converted entity.DeviceID
 			Name:        row.Name,
 			Description: description,
 			SortOrder:   int(row.SortOrder),
@@ -75,37 +83,35 @@ func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID strin
 			UpdatedAt:   updatedAt,
 		})
 	}
-	log.Printf("INFO: MenuRepository.ListMenusByDeviceId for DeviceID %s found %d menus.", deviceID, len(menus))
-	return menus, nil
+	log.Printf("INFO: MenuRepository.ListMenusByDeviceId for DeviceID %s found %d menus.", deviceID.String(), len(menusResult))
+	return menusResult, nil
 }
 
 // Create は新しいメニューエンティティをデータベースに保存します。
-func (r *menuRepository) Create(ctx context.Context, menu *menu.Menu) error {
+func (r *menuRepository) Create(ctx context.Context, m *menu.Menu) error {
 	q := db.New(r.db)
 
 	var desc sql.NullString
-	if menu.Description != nil {
-		desc = sql.NullString{String: *menu.Description, Valid: true}
-	} else {
-		desc = sql.NullString{}
+	if m.Description != nil {
+		desc = sql.NullString{String: *m.Description, Valid: true}
 	}
 
 	params := db.CreateMenuParams{
-		ID:          menu.ID.String(),
-		DeviceID:    menu.DeviceID,
-		Name:        menu.Name,
+		ID:          m.ID.String(),
+		DeviceID:    m.DeviceID.String(), // Use .String()
+		Name:        m.Name,
 		Description: desc,
-		SortOrder:   int64(menu.SortOrder), // sqlcは通常int64を期待
-		CreatedAt:   menu.CreatedAt.Format(sqliteTimeFormat),
-		UpdatedAt:   menu.UpdatedAt.Format(sqliteTimeFormat),
+		SortOrder:   int64(m.SortOrder),
+		CreatedAt:   m.CreatedAt.Format(sqliteTimeFormat),
+		UpdatedAt:   m.UpdatedAt.Format(sqliteTimeFormat),
 	}
 
 	_, err := q.CreateMenu(ctx, params)
 	if err != nil {
-		log.Printf("ERROR: Failed to execute CreateMenu query for Menu ID %s, DeviceID %s: %v", menu.ID.String(), menu.DeviceID, err)
-		return fmt.Errorf("d1 query CreateMenu failed for menu %s: %w", menu.Name, err)
+		log.Printf("ERROR: Failed to execute CreateMenu query for Menu ID %s, DeviceID %s: %v", m.ID.String(), m.DeviceID.String(), err)
+		return fmt.Errorf("d1 query CreateMenu failed for menu %s: %w", m.Name, err)
 	}
 
-	log.Printf("INFO: MenuRepository.Create succeeded for Menu ID %s, DeviceID %s.", menu.ID.String(), menu.DeviceID)
+	log.Printf("INFO: MenuRepository.Create succeeded for Menu ID %s, DeviceID %s.", m.ID.String(), m.DeviceID.String())
 	return nil
 }

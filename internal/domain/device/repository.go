@@ -1,6 +1,10 @@
 package device
 
-import "context"
+import (
+	"context"
+
+	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
+)
 
 // DeviceRepository は Device エンティティの永続化を抽象化するインターフェースです。
 type DeviceRepository interface {
@@ -11,7 +15,7 @@ type DeviceRepository interface {
 
 	// FindByID は指定された ID のデバイスを取得します。
 	// 見つからない場合は、特定のドメインエラー (例: ErrDeviceNotFound) または nil とエラーを返すことが期待されます。
-	FindByID(ctx context.Context, id string) (*Device, error)
+	FindByID(ctx context.Context, id entity.DeviceID) (*Device, error)
 
 	// TODO: 必要に応じて他のメソッド (例: FindByUserID) を追加
 }

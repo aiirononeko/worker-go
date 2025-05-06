@@ -8,6 +8,7 @@ import (
 
 	domainAuth "github.com/aiirononeko/bulktrack-api/internal/domain/auth"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/device"
+	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 )
 
 // ActivateDeviceCommand はデバイスアクティベートの入力データを保持します。
@@ -49,35 +50,47 @@ func NewActivateDeviceHandler(deviceRepo device.DeviceRepository, jwtService dom
 func (h *activateDeviceHandler) Handle(ctx context.Context, cmd ActivateDeviceCommand) (*ActivateDeviceResult, error) {
 	log.Printf("INFO: Starting device activation for DeviceID: %s", cmd.DeviceID)
 
-	if cmd.DeviceID == "" {
-		log.Printf("ERROR: Invalid device ID in ActivateDeviceCommand: DeviceID is empty")
-		return nil, fmt.Errorf("invalid device ID")
+	// Convert string cmd.DeviceID to entity.DeviceID for repository and domain use
+	deviceIDValue, err := entity.NewDeviceID(cmd.DeviceID)
+	if err != nil {
+		log.Printf("ERROR: Invalid device ID '%s' in ActivateDeviceCommand: %v", cmd.DeviceID, err)
+		// Consider returning a more specific validation error if NewDeviceID provides it
+		return nil, fmt.Errorf("invalid device ID '%s': %w", cmd.DeviceID, err)
 	}
 
-	log.Printf("INFO: Finding or creating device for DeviceID: %s", cmd.DeviceID)
-	existingDevice, err := h.deviceRepo.FindByID(ctx, cmd.DeviceID)
+	log.Printf("INFO: Finding or creating device for DeviceID: %s", deviceIDValue.String())
+	existingDevice, err := h.deviceRepo.FindByID(ctx, deviceIDValue)
 	if err != nil {
-		log.Printf("ERROR: Failed to find device by ID %s: %v", cmd.DeviceID, err)
+		// Assuming FindByID might return a specific error for not found, or (nil, nil)
+		// If it's a generic error, log and return
+		log.Printf("ERROR: Failed to find device by ID %s: %v", deviceIDValue.String(), err)
 		return nil, fmt.Errorf("failed to find device: %w", err)
 	}
 
 	var dev *device.Device
 	if existingDevice == nil {
-		log.Printf("INFO: No existing device found for DeviceID %s, creating new one.", cmd.DeviceID)
-		dev = device.NewDevice(cmd.DeviceID, nil)
+		log.Printf("INFO: No existing device found for DeviceID %s, creating new one.", deviceIDValue.String())
+		dev, err = device.NewDevice(cmd.DeviceID, nil) // cmd.DeviceID is string, NewDevice handles conversion
+		if err != nil {
+			log.Printf("ERROR: Failed to create new device instance for DeviceID %s: %v", cmd.DeviceID, err)
+			return nil, fmt.Errorf("failed to instantiate device: %w", err)
+		}
 	} else {
-		log.Printf("INFO: Existing device found for DeviceID %s, updating last seen.", cmd.DeviceID)
+		log.Printf("INFO: Existing device found for DeviceID %s, updating last seen.", deviceIDValue.String())
 		dev = existingDevice
 		dev.UpdateLastSeen()
 	}
 
-	log.Printf("INFO: Saving device information for DeviceID: %s (User ID: %v)", dev.ID, dev.UserID)
+	log.Printf("INFO: Saving device information for DeviceID: %s (User ID: %v)", dev.ID.String(), dev.UserID)
 	if err := h.deviceRepo.Save(ctx, dev); err != nil {
-		log.Printf("ERROR: Failed to save device for DeviceID %s: %v", dev.ID, err)
+		log.Printf("ERROR: Failed to save device for DeviceID %s: %v", dev.ID.String(), err)
 		return nil, fmt.Errorf("failed to save device: %w", err)
 	}
 
-	uid := fmt.Sprintf("device:%s", dev.ID)
+	// Use the original string device ID from the command for the UID prefix logic if needed,
+	// or ensure dev.ID.String() is used consistently if it should be the canonical one.
+	// For JWT UID, it's common to use the canonical (potentially normalized) ID.
+	uid := fmt.Sprintf("device:%s", dev.ID.String()) // Use dev.ID.String()
 	log.Printf("INFO: Generating JWT for UID: %s", uid)
 	accessToken, refreshToken, refreshTokenJTI, expiresAt, err := h.jwtService.GenerateTokens(ctx, uid)
 	if err != nil {
