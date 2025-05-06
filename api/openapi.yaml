@@ -189,6 +189,91 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+    post:
+      tags:
+        - Menus
+      summary: Add exercises to a specific menu
+      description: >
+        Adds one or more exercises with their positions to the specified menu.
+        If an exercise with the same ID and position already exists, it might be ignored or result in an error
+        based on server-side handling of unique constraints. This operation is intended for appending
+        or inserting new exercises. For wholesale replacement, use PUT.
+      operationId: addMenuExercises
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: menuId
+          in: path
+          required: true
+          description: ID of the menu to add exercises to.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        description: List of exercises (ID and position) to add to the menu.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMenuExercisesRequest' # Reusing the same schema as PUT
+      responses:
+        '201':
+          description: Exercises added successfully and the updated menu is returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuWithExercises'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound' # Menu not found
+        '409': # Consider if a conflict (e.g. exercise already exists at position) should be a specific error
+          description: Conflict (e.g., exercise already linked or position conflict).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/responses/Conflict' # Assuming a generic Conflict response schema exists or will be added
+
+  /v1/menus/{menuId}/exercises/{exerciseId}:
+    delete:
+      tags:
+        - Menus
+      summary: Remove a specific exercise from a menu
+      description: Removes the association between a specific menu and a specific exercise.
+      operationId: removeMenuExercise
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: menuId
+          in: path
+          required: true
+          description: ID of the menu.
+          schema:
+            type: string
+            format: uuid
+        - name: exerciseId
+          in: path
+          required: true
+          description: ID of the exercise to remove from the menu.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Exercise successfully removed from the menu.
+        '400':
+          $ref: '#/components/responses/BadRequest' # e.g. invalid UUID format
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound' # Menu or menu-exercise link not found
+
   # --- Workout Endpoints --- #
   /v1/workouts:
     post:
@@ -890,6 +975,19 @@ components:
               details:
                 type: string
                 example: "An unexpected error occurred."
+    Conflict:
+      description: Conflict (e.g., exercise already linked or position conflict).
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "Conflict"
+              details:
+                type: string
+                example: "The requested operation cannot be completed due to a conflict."
 
 security:
   - BearerAuth: [] # Default security for endpoints not explicitly marked otherwise
