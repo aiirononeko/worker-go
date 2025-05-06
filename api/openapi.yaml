@@ -121,6 +121,34 @@ paths:
       security:
         - bearerAuth: [] # Explicitly require bearer auth for this endpoint
 
+    post:
+      summary: Create a new menu
+      operationId: createMenu
+      tags:
+        - Menus
+      description: Creates a new menu item for the authenticated user/device.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMenuRequest'
+      responses:
+        '201':
+          description: Menu created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuDTO'
+        '400':
+          description: Bad Request (e.g., validation error, missing required fields like name).
+        '401':
+          description: Unauthorized (Invalid or missing Authorization header).
+        '500':
+          description: Internal Server Error.
+      security:
+        - bearerAuth: [] # Explicitly require bearer auth for this endpoint
+
   # --- Workout Endpoints --- #
   /v1/workouts:
     post:
@@ -279,6 +307,24 @@ components:
         - sort_order
         - created_at
         - updated_at
+
+    CreateMenuRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of the menu item.
+          minLength: 1
+        description:
+          type: string
+          nullable: true
+          description: Optional description for the menu item.
+        sort_order:
+          type: integer
+          description: Order for sorting menus. Lower values appear first. Defaults to 0 if not provided by client, but API requires it.
+      required:
+        - name
+        - sort_order
 
     # --- New Workout Schemas for POST /v1/workouts --- #
     CreateWorkoutRequest:

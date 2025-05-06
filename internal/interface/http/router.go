@@ -21,22 +21,33 @@ type Route struct {
 // RouterDependencies はルーターが依存するものをまとめます。
 // NewRouter に渡すために使います。
 type RouterDependencies struct {
-	Routes            []Route
-	GlobalMiddlewares []middleware.Middleware   // 全てのルートに適用されるミドルウェア (CORS, Logging)
-	AuthHandler       *handler.AuthHandler      // 認証エンドポイント用
-	PingHandler       *handler.PingHandler      // pingエンドポイント用
-	ListMenusHandler  *handler.ListMenusHandler // メニュー一覧用 (Routesでラップされる想定だが、個別に渡すことも考慮)
+	Routes                []Route
+	GlobalMiddlewares     []middleware.Middleware // 全てのルートに適用されるミドルウェア (CORS, Logging)
+	AuthHandler           *handler.AuthHandler    // 認証エンドポイント用
+	PingHandler           *handler.PingHandler    // pingエンドポイント用
+	MenuHandler           *handler.MenuHandler    // /v1/menus 用 (GET, POST)
+	RequireAuthMiddleware middleware.Middleware   // 認証ミドルウェアのインスタンス
 }
 
 // NewRouter はルート定義とグローバルミドルウェアを受け取り、HTTPルーターを初期化します。
 func NewRouter(deps RouterDependencies) http.Handler {
 	mux := http.NewServeMux()
 
-	// 定義されたルートを登録 (これらはルート固有ミドルウェア + グローバルミドルウェアが適用される)
+	// /v1/menus ルート (認証が必要)
+	if deps.MenuHandler != nil {
+		menuMiddlewares := []middleware.Middleware{deps.RequireAuthMiddleware} // ルート固有ミドルウェア
+		allMiddlewares := make([]middleware.Middleware, 0, len(menuMiddlewares)+len(deps.GlobalMiddlewares))
+		allMiddlewares = append(allMiddlewares, menuMiddlewares...)        // 内側 (Auth)
+		allMiddlewares = append(allMiddlewares, deps.GlobalMiddlewares...) // 外側 (Logging, CORS)
+		finalMenuHandler := middleware.Chain(deps.MenuHandler, allMiddlewares...)
+		mux.Handle("/v1/menus", finalMenuHandler) // パスのみ指定
+	}
+
+	// --- その他のカスタムルート (Routes スライスを使う場合) ---
 	for _, route := range deps.Routes {
 		allMiddlewares := make([]middleware.Middleware, 0, len(route.Middlewares)+len(deps.GlobalMiddlewares))
-		allMiddlewares = append(allMiddlewares, route.Middlewares...)      // 内側のミドルウェア (例: Auth)
-		allMiddlewares = append(allMiddlewares, deps.GlobalMiddlewares...) // 外側のミドルウェア (例: Logging, CORS)
+		allMiddlewares = append(allMiddlewares, route.Middlewares...)      // Route specific
+		allMiddlewares = append(allMiddlewares, deps.GlobalMiddlewares...) // Global
 		finalHandler := middleware.Chain(route.Handler, allMiddlewares...)
 		mux.Handle(route.Path, finalHandler)
 	}

@@ -9,6 +9,8 @@ import (
 
 	"github.com/aiirononeko/bulktrack-api/internal/domain/menu"
 	// Import sqlc generated package from the correct path with alias 'db'
+	"database/sql" // For sql.NullString
+
 	db "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/d1/sql"
 	"github.com/google/uuid" // For UUID parsing
 )
@@ -75,4 +77,35 @@ func (r *menuRepository) ListMenusByDeviceId(ctx context.Context, deviceID strin
 	}
 	log.Printf("INFO: MenuRepository.ListMenusByDeviceId for DeviceID %s found %d menus.", deviceID, len(menus))
 	return menus, nil
+}
+
+// Create は新しいメニューエンティティをデータベースに保存します。
+func (r *menuRepository) Create(ctx context.Context, menu *menu.Menu) error {
+	q := db.New(r.db)
+
+	var desc sql.NullString
+	if menu.Description != nil {
+		desc = sql.NullString{String: *menu.Description, Valid: true}
+	} else {
+		desc = sql.NullString{}
+	}
+
+	params := db.CreateMenuParams{
+		ID:          menu.ID.String(),
+		DeviceID:    menu.DeviceID,
+		Name:        menu.Name,
+		Description: desc,
+		SortOrder:   int64(menu.SortOrder), // sqlcは通常int64を期待
+		CreatedAt:   menu.CreatedAt.Format(sqliteTimeFormat),
+		UpdatedAt:   menu.UpdatedAt.Format(sqliteTimeFormat),
+	}
+
+	_, err := q.CreateMenu(ctx, params)
+	if err != nil {
+		log.Printf("ERROR: Failed to execute CreateMenu query for Menu ID %s, DeviceID %s: %v", menu.ID.String(), menu.DeviceID, err)
+		return fmt.Errorf("d1 query CreateMenu failed for menu %s: %w", menu.Name, err)
+	}
+
+	log.Printf("INFO: MenuRepository.Create succeeded for Menu ID %s, DeviceID %s.", menu.ID.String(), menu.DeviceID)
+	return nil
 }

@@ -7,7 +7,56 @@ package sql
 
 import (
 	"context"
+	"database/sql"
 )
+
+const createMenu = `-- name: CreateMenu :one
+INSERT INTO menus (
+    id,
+    device_id,
+    name,
+    description,
+    sort_order,
+    created_at,
+    updated_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?
+)
+RETURNING id, device_id, name, description, sort_order, created_at, updated_at
+`
+
+type CreateMenuParams struct {
+	ID          string         `json:"id"`
+	DeviceID    string         `json:"device_id"`
+	Name        string         `json:"name"`
+	Description sql.NullString `json:"description"`
+	SortOrder   int64          `json:"sort_order"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
+}
+
+func (q *Queries) CreateMenu(ctx context.Context, arg CreateMenuParams) (Menu, error) {
+	row := q.db.QueryRowContext(ctx, createMenu,
+		arg.ID,
+		arg.DeviceID,
+		arg.Name,
+		arg.Description,
+		arg.SortOrder,
+		arg.CreatedAt,
+		arg.UpdatedAt,
+	)
+	var i Menu
+	err := row.Scan(
+		&i.ID,
+		&i.DeviceID,
+		&i.Name,
+		&i.Description,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
 
 const listMenusByDeviceId = `-- name: ListMenusByDeviceId :many
 SELECT

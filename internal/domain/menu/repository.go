@@ -10,7 +10,7 @@ import (
 // Menu はドメインエンティティを表します。
 type Menu struct {
 	ID          uuid.UUID
-	DeviceID    string
+	DeviceID    string // NOTE: 本来は entity.DeviceID のような型が望ましい
 	Name        string
 	Description *string // ポインタ or sql.NullString に合わせた型が良いかも
 	SortOrder   int
@@ -19,7 +19,12 @@ type Menu struct {
 }
 
 // MenuRepository はメニューデータの永続化を抽象化するインターフェースです。
+//
+//go:generate mockery --name MenuRepository --output ./mocks --inpackage
 type MenuRepository interface {
 	// ListMenusByDeviceId は指定されたデバイスIDのメニュー一覧をソート順で取得します。
 	ListMenusByDeviceId(ctx context.Context, deviceID string) ([]Menu, error)
+
+	// Create は新しいメニューエンティティを永続化層に保存します。
+	Create(ctx context.Context, menu *Menu) error
 }

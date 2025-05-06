@@ -53,3 +53,10 @@ func RequireAuth(jwtService domainAuth.JWTService) func(http.Handler) http.Handl
 		})
 	}
 }
+
+// GetDeviceIDFromContext retrieves the device ID (stored as UID) from the request context.
+// It returns the device ID and a boolean indicating whether the value was found.
+func GetDeviceIDFromContext(ctx context.Context) (string, bool) {
+	uid, ok := ctx.Value(UIDKey).(string)
+	return uid, ok
+}

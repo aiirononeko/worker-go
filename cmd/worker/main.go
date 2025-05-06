@@ -58,17 +58,20 @@ func main() {
 		log.Fatalf("Failed to initialize JWT service: %v", err)
 	}
 
+	// --- Application Layer Handlers/Services ---
 	activateDeviceHandler := appCmd.NewActivateDeviceHandler(deviceRepo, jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
 	refreshTokenHandler := appCmd.NewRefreshTokenHandler(jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
 	logoutHandler := appCmd.NewLogoutHandler(jwtService, refreshTokenRepo)
-	listMenusService := appQuery.NewListMenusQueryService(menuRepo)
+	listMenusQuery := appQuery.NewListMenusQueryService(menuRepo)
+	createMenuCmdHandler := appCmd.NewCreateMenuHandler(menuRepo)
 	pingService := appQuery.NewPingQueryService()
 
-	listMenusHttpHandler := appHttpHandler.NewListMenusHandler(listMenusService)
+	// --- HTTP Handlers ---
+	menuHttpHandler := appHttpHandler.NewMenuHandler(listMenusQuery, createMenuCmdHandler)
 	pingHttpHandler := appHttpHandler.NewPingHandler(pingService)
 	authHttpHandler := appHttpHandler.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler)
 
-	// --- ミドルウェアの定義 ---
+	// --- Middlewares ---
 	loggingMiddlewareFunc := middleware.LoggingMiddleware
 	corsMiddlewareFunc := middleware.CORS
 	authMiddlewareFunc := middleware.RequireAuth(jwtService)
@@ -78,26 +81,28 @@ func main() {
 		corsMiddlewareFunc,
 	}
 
-	// --- ルートの定義 ---
+	// --- Routes Definition (Use RouterDependencies for main routes now) ---
 	routes := []httpRouter.Route{
-		{
-			Path:        "/v1/menus",
-			Handler:     listMenusHttpHandler,
-			Middlewares: []middleware.Middleware{authMiddlewareFunc},
-		},
+		// Other custom routes can be defined here if needed
+		// {
+		// 	Path:        "/v1/some_other_path",
+		// 	Handler:     someOtherHandler,
+		// 	Middlewares: []middleware.Middleware{authMiddlewareFunc},
+		// },
 	}
 
-	// ルーターの依存関係を設定
+	// --- Configure Router Dependencies ---
 	routerDeps := httpRouter.RouterDependencies{
-		Routes:            routes,
-		GlobalMiddlewares: globalMiddlewares,
-		AuthHandler:       authHttpHandler,
-		PingHandler:       pingHttpHandler,
-		ListMenusHandler:  listMenusHttpHandler,
+		Routes:                routes,
+		GlobalMiddlewares:     globalMiddlewares,
+		AuthHandler:           authHttpHandler,
+		PingHandler:           pingHttpHandler,
+		MenuHandler:           menuHttpHandler,
+		RequireAuthMiddleware: authMiddlewareFunc,
 	}
 
 	finalRouter := httpRouter.NewRouter(routerDeps)
 
-	log.Println("Starting server with new router and middleware configuration...")
+	log.Println("Starting server with combined MenuHandler and updated router config...")
 	workers.Serve(finalRouter)
 }
