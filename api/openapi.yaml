@@ -122,6 +122,37 @@ paths:
         - bearerAuth: [] # Explicitly require bearer auth for this endpoint
 
   # --- Workout Endpoints --- #
+  /v1/workouts:
+    post:
+      summary: Register a new workout
+      operationId: createWorkout
+      tags:
+        - Workouts
+      description: >
+        Registers a new workout session including its sets.
+        Requires bearer authentication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkoutRequest'
+      responses:
+        '201':
+          description: Workout created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutResponse'
+        '400':
+          description: Bad Request (e.g., validation error, missing required fields).
+        '401':
+          description: Unauthorized (Invalid or missing Authorization header).
+        '500':
+          description: Internal Server Error.
+      security:
+        - bearerAuth: []
+
   /workouts/{id}:
     get:
       summary: Get workout details by ID
@@ -248,6 +279,186 @@ components:
         - sort_order
         - created_at
         - updated_at
+
+    # --- New Workout Schemas for POST /v1/workouts --- #
+    CreateWorkoutRequest:
+      type: object
+      description: Request body for creating a new workout.
+      properties:
+        menu_id:
+          type: string
+          format: uuid
+          description: ID of the menu this workout is based on.
+        performed_at:
+          type: string
+          format: date-time
+          description: Timestamp when the workout was performed (ISO 8601 format).
+        sets:
+          type: array
+          description: List of sets performed in this workout.
+          items:
+            $ref: '#/components/schemas/WorkoutSetInput'
+          minItems: 1
+      required:
+        - menu_id
+        - performed_at
+        - sets
+
+    WorkoutSetInput:
+      type: object
+      description: Represents a single set within a workout for creation.
+      properties:
+        exercise_id:
+          type: string
+          format: uuid
+          description: ID of the exercise performed in this set.
+        weight:
+          type: number
+          format: float
+          description: Weight used for the set (e.g., in kg or lbs).
+          minimum: 0
+        reps:
+          type: integer
+          description: Number of repetitions performed.
+          minimum: 0
+        rpe:
+          type: number
+          format: float
+          nullable: true
+          description: Rate of Perceived Exertion for this set (e.g., 0-10). rpe と rir は排他的です。どちらか一方のみを指定、または両方省略してください。
+          minimum: 0
+          maximum: 10
+        rir:
+          type: integer
+          nullable: true
+          description: Reps In Reserve for this set (e.g., 0-10). rpe と rir は排他的です。どちらか一方のみを指定、または両方省略してください。
+          minimum: 0
+          maximum: 10
+      required:
+        - exercise_id
+        - weight
+        - reps
+      examples:
+        setWithRPE:
+          summary: Example of a set with RPE
+          value:
+            exercise_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+            weight: 100
+            reps: 10
+            rpe: 8.5
+        setWithRIR:
+          summary: Example of a set with RIR
+          value:
+            exercise_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+            weight: 100
+            reps: 10
+            rir: 2
+        setWithoutRPEOrRIR:
+          summary: Example of a set without RPE or RIR
+          value:
+            exercise_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+            weight: 100
+            reps: 10
+
+    WorkoutResponse:
+      type: object
+      description: Response after successfully creating a workout.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID of the newly created workout.
+        device_id:
+          type: string
+          format: uuid
+          description: ID of the device that created this workout.
+        menu_id:
+          type: string
+          format: uuid
+          description: ID of the menu this workout is based on.
+        performed_at:
+          type: string
+          format: date-time
+          description: Timestamp when the workout was performed.
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when the workout record was created.
+        updated_at:
+          type: string
+          format: date-time
+          description: Timestamp when the workout record was last updated.
+        sets:
+          type: array
+          description: List of sets recorded for this workout.
+          items:
+            $ref: '#/components/schemas/WorkoutSetResponseItem'
+      required:
+        - id
+        - device_id
+        - menu_id
+        - performed_at
+        - created_at
+        - updated_at
+        - sets
+
+    WorkoutSetResponseItem:
+      type: object
+      description: Represents a single recorded set within a workout response.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID of the recorded workout set.
+        exercise_id:
+          type: string
+          format: uuid
+          description: ID of the exercise performed.
+        weight:
+          type: number
+          format: float
+          description: Weight used.
+        reps:
+          type: integer
+          description: Repetitions performed.
+        volume:
+          type: number
+          format: float
+          description: Calculated volume (weight * reps).
+        rpe:
+          type: number
+          format: float
+          nullable: true
+          description: Rate of Perceived Exertion for this set. rpe と rir は排他的です。
+        rir:
+          type: integer
+          nullable: true
+          description: Reps In Reserve for this set. rpe と rir は排他的です。
+      required:
+        - id
+        - exercise_id
+        - weight
+        - reps
+        - volume
+      examples:
+        setWithRPE:
+          summary: Example response for a set with RPE
+          value:
+            id: "3f1e8c90-3c47-4f95-bb80-72f8d3d792f7"
+            exercise_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+            weight: 100
+            reps: 10
+            volume: 1000
+            rpe: 8.5
+        setWithRIR:
+          summary: Example response for a set with RIR
+          value:
+            id: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+            exercise_id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+            weight: 100
+            reps: 10
+            volume: 1000
+            rir: 2
 
     # --- Existing Workout Schemas --- #
     WorkoutDetail:
