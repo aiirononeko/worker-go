@@ -5,7 +5,6 @@ package main
 import (
 	"database/sql"
 	"log"
-	"net/http"
 
 	_ "github.com/syumai/workers/cloudflare/d1"
 	"github.com/syumai/workers/cloudflare/kv"
@@ -16,8 +15,8 @@ import (
 	infraAuth "github.com/aiirononeko/bulktrack-api/internal/infrastructure/auth"
 	infraD1 "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/d1"
 	infraKV "github.com/aiirononeko/bulktrack-api/internal/infrastructure/persistence/kv"
-	appRouter "github.com/aiirononeko/bulktrack-api/internal/interface/http"
-	appHttp "github.com/aiirononeko/bulktrack-api/internal/interface/http/handler"
+	httpRouter "github.com/aiirononeko/bulktrack-api/internal/interface/http"
+	appHttpHandler "github.com/aiirononeko/bulktrack-api/internal/interface/http/handler"
 	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
 
 	"github.com/syumai/workers"
@@ -29,74 +28,76 @@ const (
 )
 
 func main() {
-	// --- 設定読み込み ---
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// --- データベース接続 (D1) ---
 	db, err := sql.Open("d1", d1BindingName)
 	if err != nil {
-		log.Fatalf("Failed to sql.Open D1 with driver 'd1' and binding '%s': %v", d1BindingName, err)
+		log.Fatalf("Failed to sql.Open D1: %v", err)
 	}
 	defer db.Close()
-
 	if err := db.Ping(); err != nil {
-		log.Fatalf("Failed to ping D1 database: %v", err)
+		log.Fatalf("Failed to ping D1: %v", err)
 	}
 	log.Println("Successfully connected to D1 database via binding:", d1BindingName)
 
-	// --- KV 名前空間バインディング取得 ---
 	refreshTokenKV, err := kv.NewNamespace(refreshTokenKVBindingName)
 	if err != nil {
-		log.Fatalf("Failed to get KV namespace binding '%s': %v", refreshTokenKVBindingName, err)
+		log.Fatalf("Failed to get KV namespace: %v", err)
 	}
 	log.Printf("Successfully bound to KV namespace: %s", refreshTokenKVBindingName)
 
-	// --- 依存性注入 (DI) ---
-
-	// Repositories
 	menuRepo := infraD1.NewMenuRepository(db)
 	deviceRepo := infraD1.NewD1DeviceRepository(db)
-	refreshTokenRepo := infraKV.NewKVRefreshTokenRepository(*refreshTokenKV) // ポインタをデリファレンスして値を渡す
+	refreshTokenRepo := infraKV.NewKVRefreshTokenRepository(*refreshTokenKV)
 
-	// Services
-	jwtService, err := infraAuth.NewJWTService(cfg.JWTPrivateKeyPEM, cfg.JWTPublicKeyPEM, cfg.AccessTokenTTL, cfg.RefreshTokenTTL) // EdDSA Service を初期化
+	jwtService, err := infraAuth.NewJWTService(cfg.JWTPrivateKeyPEM, cfg.JWTPublicKeyPEM, cfg.AccessTokenTTL, cfg.RefreshTokenTTL)
 	if err != nil {
 		log.Fatalf("Failed to initialize JWT service: %v", err)
 	}
 
-	// Application Handlers (Commands & Queries)
 	activateDeviceHandler := appCmd.NewActivateDeviceHandler(deviceRepo, jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
 	refreshTokenHandler := appCmd.NewRefreshTokenHandler(jwtService, refreshTokenRepo, cfg.RefreshTokenTTL)
-	logoutHandler := appCmd.NewLogoutHandler(jwtService, refreshTokenRepo) // LogoutHandler を初期化
+	logoutHandler := appCmd.NewLogoutHandler(jwtService, refreshTokenRepo)
 	listMenusService := appQuery.NewListMenusQueryService(menuRepo)
 	pingService := appQuery.NewPingQueryService()
 
-	// Interface Handlers (HTTP)
-	listMenusHandler := appHttp.NewListMenusHandler(listMenusService)
-	pingHandler := appHttp.NewPingHandler(pingService)
-	authHandler := appHttp.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler) // Auth Handler に logoutHandler を渡す
+	listMenusHttpHandler := appHttpHandler.NewListMenusHandler(listMenusService)
+	pingHttpHandler := appHttpHandler.NewPingHandler(pingService)
+	authHttpHandler := appHttpHandler.NewAuthHandler(activateDeviceHandler, refreshTokenHandler, logoutHandler)
 
-	// Router を初期化して取得
-	routerDeps := appRouter.RouterDependencies{
-		AuthHandler:      authHandler,
-		PingHandler:      pingHandler,
-		ListMenusHandler: listMenusHandler,
+	// --- ミドルウェアの定義 ---
+	loggingMiddlewareFunc := middleware.LoggingMiddleware
+	corsMiddlewareFunc := middleware.CORS
+	authMiddlewareFunc := middleware.RequireAuth(jwtService)
+
+	globalMiddlewares := []middleware.Middleware{
+		loggingMiddlewareFunc,
+		corsMiddlewareFunc,
 	}
-	router := appRouter.NewRouter(routerDeps)
 
-	// グローバルミドルウェアを適用
-	var handler http.Handler = router // 型を明示
+	// --- ルートの定義 ---
+	routes := []httpRouter.Route{
+		{
+			Path:        "/v1/menus",
+			Handler:     listMenusHttpHandler,
+			Middlewares: []middleware.Middleware{authMiddlewareFunc},
+		},
+	}
 
-	// 認証ミドルウェアのインスタンスを作成
-	authMiddleware := middleware.RequireAuth(jwtService)
+	// ルーターの依存関係を設定
+	routerDeps := httpRouter.RouterDependencies{
+		Routes:            routes,
+		GlobalMiddlewares: globalMiddlewares,
+		AuthHandler:       authHttpHandler,
+		PingHandler:       pingHttpHandler,
+		ListMenusHandler:  listMenusHttpHandler,
+	}
 
-	handler = authMiddleware(handler)               // 最初に認証を適用 (ルーターの直前)
-	handler = middleware.LoggingMiddleware(handler) // 次にロギング
-	handler = middleware.CORS(handler)              // 最後にCORS (最も外側)
+	finalRouter := httpRouter.NewRouter(routerDeps)
 
-	log.Println("Starting server with CORS, Logging, and Auth middleware...")
-	workers.Serve(handler) // ミドルウェアでラップされたハンドラを渡す
+	log.Println("Starting server with new router and middleware configuration...")
+	workers.Serve(finalRouter)
 }
