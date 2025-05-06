@@ -12,19 +12,22 @@ import (
 
 const getExerciseVolumeSummary = `-- name: GetExerciseVolumeSummary :many
 SELECT
-    exercise_id,
-    exercise_name,
-    SUM(volume) AS total_volume
+    ev.exercise_id,
+    ev.exercise_name,
+    SUM(ev.volume) AS total_volume,
+    COUNT(*) AS total_sets,
+    SUM(ev.reps) AS total_reps,
+    MAX(ev.weight) AS max_weight
 FROM
-    vw_exercise_volumes -- Use View 2
+    vw_exercise_volumes ev
 WHERE
-    device_id = ? -- $1: device_id
-    AND performed_at >= ? -- $2: start_date (inclusive)
-    AND performed_at < ?  -- $3: end_date (exclusive)
+    ev.device_id = ?1           -- $1: device_id
+    AND ev.performed_at >= ?2   -- $2: start_date (inclusive)
+    AND ev.performed_at < ?3    -- $3: end_date (exclusive)
 GROUP BY
-    exercise_id, exercise_name
+    ev.exercise_id, ev.exercise_name
 ORDER BY
-    total_volume DESC, exercise_name ASC
+    total_volume DESC, ev.exercise_name ASC
 `
 
 type GetExerciseVolumeSummaryParams struct {
@@ -37,6 +40,9 @@ type GetExerciseVolumeSummaryRow struct {
 	ExerciseID   string          `json:"exercise_id"`
 	ExerciseName string          `json:"exercise_name"`
 	TotalVolume  sql.NullFloat64 `json:"total_volume"`
+	TotalSets    int64           `json:"total_sets"`
+	TotalReps    sql.NullFloat64 `json:"total_reps"`
+	MaxWeight    interface{}     `json:"max_weight"`
 }
 
 // Get total volume per exercise for a given device within a date range.
@@ -49,7 +55,14 @@ func (q *Queries) GetExerciseVolumeSummary(ctx context.Context, arg GetExerciseV
 	var items []GetExerciseVolumeSummaryRow
 	for rows.Next() {
 		var i GetExerciseVolumeSummaryRow
-		if err := rows.Scan(&i.ExerciseID, &i.ExerciseName, &i.TotalVolume); err != nil {
+		if err := rows.Scan(
+			&i.ExerciseID,
+			&i.ExerciseName,
+			&i.TotalVolume,
+			&i.TotalSets,
+			&i.TotalReps,
+			&i.MaxWeight,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

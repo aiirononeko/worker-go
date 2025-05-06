@@ -6,11 +6,14 @@ type WeeklyVolumeSummaryDTO struct {
 	TotalVolume float64 `json:"totalVolume"`
 }
 
-// ExerciseVolumeSummaryDTO represents the total volume for a specific exercise.
+// ExerciseVolumeSummaryDTO represents the aggregated volume data for a specific exercise.
 type ExerciseVolumeSummaryDTO struct {
 	ExerciseID   string  `json:"exerciseId"`
 	ExerciseName string  `json:"exerciseName"`
 	TotalVolume  float64 `json:"totalVolume"`
+	TotalSets    int64   `json:"totalSets"`
+	TotalReps    int64   `json:"totalReps"`
+	MaxWeight    float64 `json:"maxWeight"`
 }
 
 // MuscleVolumeSummaryDTO represents the total volume for a specific muscle group.

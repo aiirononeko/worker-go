@@ -56,6 +56,8 @@ type VwExerciseVolume struct {
 	DeviceID     string          `json:"device_id"`
 	SetOrder     int64           `json:"set_order"`
 	Volume       sql.NullFloat64 `json:"volume"`
+	Weight       float64         `json:"weight"`
+	Reps         int64           `json:"reps"`
 	ExerciseID   string          `json:"exercise_id"`
 	ExerciseName string          `json:"exercise_name"`
 }
@@ -67,6 +69,8 @@ type VwMuscleVolume struct {
 	DeviceID     string          `json:"device_id"`
 	SetOrder     int64           `json:"set_order"`
 	Volume       sql.NullFloat64 `json:"volume"`
+	Weight       float64         `json:"weight"`
+	Reps         int64           `json:"reps"`
 	ExerciseID   string          `json:"exercise_id"`
 	ExerciseName string          `json:"exercise_name"`
 	MuscleID     string          `json:"muscle_id"`

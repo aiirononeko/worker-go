@@ -18,19 +18,22 @@ ORDER BY
 -- name: GetExerciseVolumeSummary :many
 -- Get total volume per exercise for a given device within a date range.
 SELECT
-    exercise_id,
-    exercise_name,
-    SUM(volume) AS total_volume
+    ev.exercise_id,
+    ev.exercise_name,
+    SUM(ev.volume) AS total_volume,
+    COUNT(*) AS total_sets,
+    SUM(ev.reps) AS total_reps,
+    MAX(ev.weight) AS max_weight
 FROM
-    vw_exercise_volumes -- Use View 2
+    vw_exercise_volumes ev
 WHERE
-    device_id = ? -- $1: device_id
-    AND performed_at >= ? -- $2: start_date (inclusive)
-    AND performed_at < ?  -- $3: end_date (exclusive)
+    ev.device_id = ?1           -- $1: device_id
+    AND ev.performed_at >= ?2   -- $2: start_date (inclusive)
+    AND ev.performed_at < ?3    -- $3: end_date (exclusive)
 GROUP BY
-    exercise_id, exercise_name
+    ev.exercise_id, ev.exercise_name
 ORDER BY
-    total_volume DESC, exercise_name ASC;
+    total_volume DESC, ev.exercise_name ASC;
 
 -- name: GetMuscleVolumeSummary :many
 -- Get total volume per muscle group for a given device within a date range.

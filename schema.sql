@@ -148,13 +148,15 @@ SELECT
     vwsd.device_id,
     vwsd.set_order,
     vwsd.volume,
+    vwsd.weight,
+    vwsd.reps,
     ex.id AS exercise_id,
     ex.name AS exercise_name
     -- Add other columns from exercises or menus if needed for dashboard display
 FROM
     vw_workout_set_details vwsd
 JOIN
-    workouts w ON vwsd.workout_id = w.id -- Need workouts again to get menu_id
+    workouts w ON vwsd.workout_id = w.id
 JOIN
     menus m ON w.menu_id = m.id
 JOIN
