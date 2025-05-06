@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS menus (
     sort_order  INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (device_id) REFERENCES devices(id)
+    FOREIGN KEY (device_id) REFERENCES devices(id),
+    UNIQUE (device_id, name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_menu_device_id ON menus(device_id);
