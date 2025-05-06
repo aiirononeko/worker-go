@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -14,15 +15,19 @@ import (
 	"github.com/aiirononeko/bulktrack-api/internal/app/query"
 	"github.com/aiirononeko/bulktrack-api/internal/domain/entity"
 	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware"
+	"github.com/go-playground/validator/v10"
 )
+
+// バリデーターインスタンス (シングルトンまたはハンドラー初期化時に生成)
+var validate = validator.New()
 
 // --- DTOs (common for Menu endpoints) --- //
 
 // CreateMenuRequest mirrors the OpenAPI schema `CreateMenuRequest`
 type CreateMenuRequest struct {
-	Name        string  `json:"name"`
-	Description *string `json:"description,omitempty"`
-	SortOrder   int     `json:"sort_order"`
+	Name        string  `json:"name" validate:"required,gte=1,lte=100"`
+	Description *string `json:"description,omitempty" validate:"omitempty,lte=500"`
+	SortOrder   int     `json:"sort_order" validate:"gte=0"`
 }
 
 // MenuDTO mirrors the OpenAPI schema `MenuDTO` for the response
@@ -156,9 +161,34 @@ func (h *MenuHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// バリデーションの実行
+	if err := validate.Struct(req); err != nil {
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			// エラーメッセージを整形 (詳細は省略可能)
+			// Example: Format validation errors into a readable string or structure
+			var errorMsgs []string
+			for _, fe := range validationErrors {
+				// ここで fe.Tag(), fe.Field(), fe.Param() などを使って詳細なメッセージを生成できる
+				errorMsgs = append(errorMsgs, fmt.Sprintf("Field '%s' failed validation on '%s' tag", fe.Field(), fe.Tag()))
+			}
+			details := strings.Join(errorMsgs, "; ")
+			appErr := apperror.NewErrBadRequest("Input validation failed", details)
+			logger.WarnContext(ctx, "Input validation failed for create menu", slog.Any("validation_errors", details), slog.Any("error", appErr))
+			SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, appErr.Details) // Use formatted details
+		} else {
+			// バリデーションライブラリ自体のエラーなど、予期せぬケース
+			appErr := apperror.NewErrInternal("Error during input validation", err)
+			logger.ErrorContext(ctx, "Unexpected error during validation for create menu", slog.Any("error", appErr))
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, "Validation check failed unexpectedly")
+		}
+		return
+	}
+
+	// バリデーション成功後、コマンドを作成して実行
 	cmd := command.CreateMenuCommand{
 		DeviceID:    uid,
-		Name:        req.Name,
+		Name:        req.Name, // バリデーション済みの値を使用
 		Description: req.Description,
 		SortOrder:   req.SortOrder,
 	}

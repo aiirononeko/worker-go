@@ -3,14 +3,20 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/aiirononeko/bulktrack-api/internal/app/apperror"              // apperror をインポート
 	appCmd "github.com/aiirononeko/bulktrack-api/internal/app/command"        // Application 層を import
 	"github.com/aiirononeko/bulktrack-api/internal/interface/http/middleware" // middleware をインポート
+	"github.com/go-playground/validator/v10"                                  // validator をインポート
 )
+
+// バリデーターインスタンス (menu_handler と同様)
+var validateAuth = validator.New() // Use a different name if needed, or share instance
 
 // AuthHandler は認証関連のエンドポイントを扱います。
 type AuthHandler struct {
@@ -84,7 +90,7 @@ func (h *AuthHandler) ActivateDevice(w http.ResponseWriter, r *http.Request) {
 
 // RefreshTokenRequest はリフレッシュトークンリクエストのボディを表します。
 type RefreshTokenRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token" validate:"required"` // required タグを追加
 }
 
 // RefreshTokenResponse はリフレッシュ成功時のレスポンスを表します。
@@ -107,10 +113,24 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, appErr.Error())
 		return
 	}
-	if req.RefreshToken == "" {
-		appErr := apperror.NewErrBadRequest("refresh_token is required", "")
-		logger.Warn("RefreshToken request failed", slog.String("path", r.URL.Path), slog.Any("error", appErr))
-		SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, appErr.Error())
+
+	// バリデーションの実行
+	if err := validateAuth.Struct(req); err != nil {
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			var errorMsgs []string
+			for _, fe := range validationErrors {
+				errorMsgs = append(errorMsgs, fmt.Sprintf("Field '%s' failed validation on '%s' tag", fe.Field(), fe.Tag()))
+			}
+			details := strings.Join(errorMsgs, "; ")
+			appErr := apperror.NewErrBadRequest("Input validation failed", details)
+			logger.WarnContext(r.Context(), "Input validation failed for refresh token", slog.Any("validation_errors", details), slog.Any("error", appErr)) // Use ctx from request
+			SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, appErr.Details)
+		} else {
+			appErr := apperror.NewErrInternal("Error during input validation", err)
+			logger.ErrorContext(r.Context(), "Unexpected error during validation for refresh token", slog.Any("error", appErr)) // Use ctx from request
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, "Validation check failed unexpectedly")
+		}
 		return
 	}
 
@@ -150,7 +170,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 
 // LogoutRequest はログアウトリクエストのボディを表します。
 type LogoutRequest struct {
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token" validate:"required"` // required タグを追加
 }
 
 // Logout は受け取ったリフレッシュトークンを無効化します。
@@ -166,10 +186,24 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, appErr.Error())
 		return
 	}
-	if req.RefreshToken == "" {
-		appErr := apperror.NewErrBadRequest("refresh_token is required", "")
-		logger.Warn("Logout request failed", slog.String("path", r.URL.Path), slog.Any("error", appErr))
-		SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, appErr.Error())
+
+	// バリデーションの実行
+	if err := validateAuth.Struct(req); err != nil {
+		var validationErrors validator.ValidationErrors
+		if errors.As(err, &validationErrors) {
+			var errorMsgs []string
+			for _, fe := range validationErrors {
+				errorMsgs = append(errorMsgs, fmt.Sprintf("Field '%s' failed validation on '%s' tag", fe.Field(), fe.Tag()))
+			}
+			details := strings.Join(errorMsgs, "; ")
+			appErr := apperror.NewErrBadRequest("Input validation failed", details)
+			logger.WarnContext(r.Context(), "Input validation failed for logout", slog.Any("validation_errors", details), slog.Any("error", appErr)) // Use ctx from request
+			SendJSONError(w, logger, "Bad Request", http.StatusBadRequest, appErr.Details)
+		} else {
+			appErr := apperror.NewErrInternal("Error during input validation", err)
+			logger.ErrorContext(r.Context(), "Unexpected error during validation for logout", slog.Any("error", appErr)) // Use ctx from request
+			SendJSONError(w, logger, "Internal Server Error", http.StatusInternalServerError, "Validation check failed unexpectedly")
+		}
 		return
 	}
 
